@@ -36,3 +36,11 @@ analytics.identify({
   userId: '4'
 });
 ```
+
+## Documentation
+
+The links below contain more detailed documentation on how to use this library:
+
+* [Documentation](https://customer.io/docs/cdp/sources/connections/servers/node/)
+* [Specs](https://customer.io/docs/cdp/sources/source-spec/source-events/)
+* [npm](https://www.npmjs.com/package/@customerio/cdp-analytics-node)
