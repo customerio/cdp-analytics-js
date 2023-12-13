@@ -49,7 +49,7 @@ export function InAppPlugin(
             const deliveryId:string = message?.properties?.gist?.campaignId;
             if (typeof deliveryId != 'undefined' && deliveryId != '') {
                 _analytics.track(semanticEvents.JourneyMetric, {
-                    'delivery_id': deliveryId,
+                    'deliveryId': deliveryId,
                     'metric': semanticEvents.Opened,
                 });
             }
@@ -59,10 +59,10 @@ export function InAppPlugin(
             const deliveryId:string = params?.message?.properties?.gist?.campaignId;
             if (params.action != 'gist://close' && typeof deliveryId != 'undefined' && deliveryId != '') {
                 _analytics.track(semanticEvents.JourneyMetric, {
-                    'delivery_id': deliveryId,
+                    'deliveryId': deliveryId,
                     'metric': semanticEvents.Clicked,
-                    'action_name': params.name,
-                    'action_value': params.action,
+                    'actionName': params.name,
+                    'actionValue': params.action,
                 });
             }
             settings.events && _eventTarget.dispatchEvent(newEvent(InAppEvents.MessageAction, {

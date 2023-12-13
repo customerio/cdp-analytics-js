@@ -90,7 +90,7 @@ describe('Customer.io In-App Plugin', () => {
         }
       }
     });
-    expect(spy).toBeCalledWith('Journey Delivery Metric', {delivery_id:"testcampaign", metric:"opened"});
+    expect(spy).toBeCalledWith('Journey Delivery Metric', {deliveryId:"testcampaign", metric:"opened"});
   });
 
   it('should trigger journey event for non-dismiss click', async () => {
@@ -107,7 +107,7 @@ describe('Customer.io In-App Plugin', () => {
       action: "action value",
       name: "action name",
     });
-    expect(spy).toBeCalledWith('Journey Delivery Metric', {delivery_id:"testcampaign", metric:"clicked", action_name:"action name", action_value:"action value"});
+    expect(spy).toBeCalledWith('Journey Delivery Metric', {deliveryId:"testcampaign", metric:"clicked", actionName:"action name", actionValue:"action value"});
   });
 
   it('should not trigger journey event for dismiss click', async () => {
@@ -126,5 +126,4 @@ describe('Customer.io In-App Plugin', () => {
     });
     expect(spy).toHaveBeenCalledTimes(0);
   });
-
 });
