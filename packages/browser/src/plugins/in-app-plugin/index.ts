@@ -9,7 +9,6 @@ export { InAppEvents }
 
 export type InAppPluginSettings = {
     siteId: string | undefined
-    dataCenter: string
     events: EventListenerOrEventListenerObject | null | undefined
 
     _env: string | undefined
@@ -124,15 +123,9 @@ export function InAppPlugin(
                 return ctx;
             }
 
-            if(settings.dataCenter == "" || (settings.dataCenter != "US" && settings.dataCenter != "EU")) {
-                _error("valid dataCenter required: US|EU. Can't initialize.")
-                return ctx;
-            }
-
             await Gist.setup({
                 siteId: settings.siteId, 
                 env: settings._env? settings._env : "prod",
-                dataCenter: settings.dataCenter, 
                 logging: settings._logging,
             });
             _gistLoaded = true;

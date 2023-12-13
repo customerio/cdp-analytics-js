@@ -28,7 +28,6 @@ describe('Customer.io In-App Plugin', () => {
 
     settings = {
         siteId: 'siteid',
-        dataCenter: 'US',
     };
     inAppPlugin = InAppPlugin(settings)
 
@@ -51,7 +50,7 @@ describe('Customer.io In-App Plugin', () => {
 
   it('should setup gist with defaults', async () => {
     expect(Gist.setup).toBeCalledTimes(1);
-    expect(Gist.setup).toBeCalledWith({"dataCenter": "US", "env": "prod", "logging": undefined, "siteId": "siteid"});
+    expect(Gist.setup).toBeCalledWith({"env": "prod", "logging": undefined, "siteId": "siteid"});
     // We should clear old gist tokens on setup if we're anonymous
     expect(Gist.clearUserToken).toBeCalledTimes(1);
   });
