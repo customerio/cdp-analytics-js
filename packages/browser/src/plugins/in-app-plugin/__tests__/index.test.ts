@@ -3,9 +3,8 @@ import { Plugin } from '../../../core/plugin'
 import { pageEnrichment } from '../../page-enrichment'
 import { customerio, CustomerioSettings } from '../../customerio'
 import { InAppPlugin, InAppPluginSettings } from '../'
-import { gistToCIO } from '../events'
 import cookie from 'js-cookie'
-import Gist from './fake-gist'
+import Gist from 'customerio-gist-web'
 
 jest.mock('unfetch', () => {
   return jest.fn()
@@ -27,14 +26,13 @@ describe('Customer.io In-App Plugin', () => {
     cio = customerio(analytics, options, {})
 
     settings = {
-        siteId: 'siteid',
-    };
+      siteId: 'siteid',
+    }
     inAppPlugin = InAppPlugin(settings)
 
     await analytics.register(inAppPlugin, pageEnrichment)
 
     window.localStorage.clear()
-
   })
 
   function resetCookies(): void {
@@ -49,80 +47,92 @@ describe('Customer.io In-App Plugin', () => {
   })
 
   it('should setup gist with defaults', async () => {
-    expect(Gist.setup).toBeCalledTimes(1);
-    expect(Gist.setup).toBeCalledWith({"env": "prod", "logging": undefined, "siteId": "siteid"});
+    expect(Gist.setup).toBeCalledTimes(1)
+    expect(Gist.setup).toBeCalledWith({
+      env: 'prod',
+      logging: undefined,
+      siteId: 'siteid',
+    })
     // We should clear old gist tokens on setup if we're anonymous
-    expect(Gist.clearUserToken).toBeCalledTimes(1);
-  });
+    expect(Gist.clearUserToken).toBeCalledTimes(1)
+  })
 
   it('should set gist route on page()', async () => {
-    await analytics.page('testpage');
-    expect(Gist.setCurrentRoute).toBeCalledWith('testpage');
-  });
+    await analytics.page('testpage')
+    expect(Gist.setCurrentRoute).toBeCalledWith('testpage')
+  })
 
   it('should set gist userToken on identify()', async () => {
-    await analytics.identify('testuser@customer.io');
-    expect(Gist.setUserToken).toBeCalledTimes(1);
-    expect(Gist.setUserToken).toBeCalledWith('testuser@customer.io');
-  });
+    await analytics.identify('testuser@customer.io')
+    expect(Gist.setUserToken).toBeCalledTimes(1)
+    expect(Gist.setUserToken).toBeCalledWith('testuser@customer.io')
+  })
 
   it('should clear gist userToken on reset()', async () => {
     // Once during setup
-    expect(Gist.clearUserToken).toBeCalledTimes(1);
+    expect(Gist.clearUserToken).toBeCalledTimes(1)
 
-    await analytics.identify('testuser@customer.io');
-    expect(Gist.setUserToken).toBeCalledTimes(1);
-    expect(Gist.setUserToken).toBeCalledWith('testuser@customer.io');
+    await analytics.identify('testuser@customer.io')
+    expect(Gist.setUserToken).toBeCalledTimes(1)
+    expect(Gist.setUserToken).toBeCalledWith('testuser@customer.io')
 
-    await analytics.reset();
+    await analytics.reset()
 
     // Once after reset()
-    expect(Gist.clearUserToken).toBeCalledTimes(2);
-  });
+    expect(Gist.clearUserToken).toBeCalledTimes(2)
+  })
 
   it('should trigger journey event for open', async () => {
-    const spy = jest.spyOn(analytics, 'track');
+    const spy = jest.spyOn(analytics, 'track')
     Gist.messageShown({
       properties: {
         gist: {
           campaignId: 'testcampaign',
-        }
-      }
-    });
-    expect(spy).toBeCalledWith('Journey Delivery Metric', {deliveryId:"testcampaign", metric:"opened"});
-  });
+        },
+      },
+    })
+    expect(spy).toBeCalledWith('Journey Delivery Metric', {
+      deliveryId: 'testcampaign',
+      metric: 'opened',
+    })
+  })
 
   it('should trigger journey event for non-dismiss click', async () => {
-    const spy = jest.spyOn(analytics, 'track');
+    const spy = jest.spyOn(analytics, 'track')
     Gist.messageAction({
       message: {
         properties: {
-          messageId: "a-test-in-app",
+          messageId: 'a-test-in-app',
           gist: {
             campaignId: 'testcampaign',
-          }
+          },
         },
       },
-      action: "action value",
-      name: "action name",
-    });
-    expect(spy).toBeCalledWith('Journey Delivery Metric', {deliveryId:"testcampaign", metric:"clicked", actionName:"action name", actionValue:"action value"});
-  });
+      action: 'action value',
+      name: 'action name',
+    })
+    expect(spy).toBeCalledWith('Journey Delivery Metric', {
+      deliveryId: 'testcampaign',
+      metric: 'clicked',
+      actionName: 'action name',
+      actionValue: 'action value',
+    })
+  })
 
   it('should not trigger journey event for dismiss click', async () => {
-    const spy = jest.spyOn(analytics, 'track');
+    const spy = jest.spyOn(analytics, 'track')
     Gist.messageAction({
       message: {
         properties: {
-          messageId: "a-test-in-app",
+          messageId: 'a-test-in-app',
           gist: {
             campaignId: 'testcampaign',
-          }
+          },
         },
       },
-      action: "gist://close",
-      name: "action name",
-    });
-    expect(spy).toHaveBeenCalledTimes(0);
-  });
-});
+      action: 'gist://close',
+      name: 'action name',
+    })
+    expect(spy).toHaveBeenCalledTimes(0)
+  })
+})

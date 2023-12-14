@@ -12,7 +12,4 @@ module.exports = createJestTSConfig({
       statements: 87.25,
     },
   },
-  moduleNameMapper: {
-    'customerio-gist-web': '<rootDir>/../browser/src/plugins/in-app-plugin/__tests__/fake-gist.ts',
-  }
 })

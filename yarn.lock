@@ -777,7 +777,7 @@ __metadata:
     aws-sdk: ^2.814.0
     circular-dependency-plugin: ^5.2.2
     compression-webpack-plugin: ^8.0.1
-    customerio-gist-web: ^3.6.4
+    customerio-gist-web: "customerio/gist-web#add-support-for-esm-mk3"
     dset: ^3.1.2
     execa: ^4.1.0
     flat: ^5.0.2
@@ -5309,13 +5309,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"customerio-gist-web@npm:^3.6.4":
+"customerio-gist-web@customerio/gist-web#add-support-for-esm-mk3":
   version: 3.6.4
-  resolution: "customerio-gist-web@npm:3.6.4"
+  resolution: "customerio-gist-web@https://github.com/customerio/gist-web.git#commit=3a38b537e9e19873a2c8fd9f5805d3c83f81fbb3"
   dependencies:
     axios: ^0.21.1
     uuid: ^8.3.2
-  checksum: 775c973834edb9ab2f11ea2361486d2a3f0b3b8738198ee51ebb489913da9fac249bcf2b12fce7ea1f3aff5316260cd350f734bfbaddf1f61abe47e2bc8d5a68
+  checksum: d60f9cfff1dacd5e70d689c45607035e9c492e63197fa1a7f3ddb8210a4e89e561eda19d3d93d9b2520e565b3db8290a0ade1ec240813d0e521967371972857a
   languageName: node
   linkType: hard
 
