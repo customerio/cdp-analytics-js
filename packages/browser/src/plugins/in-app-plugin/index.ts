@@ -2,7 +2,7 @@ import { Analytics } from '../../core/analytics'
 import { Context } from '../../core/context'
 import { Plugin } from '../../core/plugin'
 
-import { InAppEvents, semanticEvents, newEvent, allEvents, gistToCIO } from './events'
+import { InAppEvents, SemanticEvents, newEvent, allEvents, gistToCIO } from './events'
 import Gist from 'customerio-gist-web'
 
 export { InAppEvents }
@@ -47,9 +47,9 @@ export function InAppPlugin(
         Gist.events.on('messageShown', (message: any) => {
             const deliveryId:string = message?.properties?.gist?.campaignId;
             if (typeof deliveryId != 'undefined' && deliveryId != '') {
-                _analytics.track(semanticEvents.JourneyMetric, {
+                _analytics.track(SemanticEvents.JourneyMetric, {
                     'deliveryId': deliveryId,
-                    'metric': semanticEvents.Opened,
+                    'metric': SemanticEvents.Opened,
                 });
             }
         });
@@ -57,9 +57,9 @@ export function InAppPlugin(
         Gist.events.on('messageAction', (params: any) => {
             const deliveryId:string = params?.message?.properties?.gist?.campaignId;
             if (params.action != 'gist://close' && typeof deliveryId != 'undefined' && deliveryId != '') {
-                _analytics.track(semanticEvents.JourneyMetric, {
+                _analytics.track(SemanticEvents.JourneyMetric, {
                     'deliveryId': deliveryId,
-                    'metric': semanticEvents.Clicked,
+                    'metric': SemanticEvents.Clicked,
                     'actionName': params.name,
                     'actionValue': params.action,
                 });

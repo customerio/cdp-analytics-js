@@ -7,7 +7,7 @@ export enum InAppEvents {
 
 export const allEvents:string[] = Object.values(InAppEvents);
 
-export enum semanticEvents {
+export enum SemanticEvents {
     JourneyMetric = 'Journeys Delivery Metric',
     Opened = 'opened',
     Clicked = 'clicked',
