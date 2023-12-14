@@ -1,49 +1,41 @@
 import { Analytics } from '../../../core/analytics'
-import { Plugin } from '../../../core/plugin'
 import { pageEnrichment } from '../../page-enrichment'
-import { customerio, CustomerioSettings } from '../../customerio'
+import { CustomerioSettings } from '../../customerio'
 import { InAppPlugin, InAppPluginSettings } from '../'
-import cookie from 'js-cookie'
 import Gist from 'customerio-gist-web'
 
-jest.mock('unfetch', () => {
-  return jest.fn()
-})
-
 describe('Customer.io In-App Plugin', () => {
-  let options: CustomerioSettings
-  let settings: InAppPluginSettings
   let analytics: Analytics
-  let inAppPlugin: Plugin
-  let cio: Plugin
+  let gistMessageShown: Function
+  let gistMessageAction: Function
 
   beforeEach(async () => {
+    if(typeof analytics !== 'undefined') {
+      analytics.reset()
+    }
+
     jest.resetAllMocks()
     jest.restoreAllMocks()
 
-    options = { apiKey: 'foo' }
-    analytics = new Analytics({ writeKey: options.apiKey })
-    cio = customerio(analytics, options, {})
-
-    settings = {
-      siteId: 'siteid',
+    Gist.setup = jest.fn()
+    Gist.clearUserToken = jest.fn()
+    Gist.setUserToken = jest.fn()
+    Gist.setCurrentRoute = jest.fn()
+    Gist.events = {
+      on: (name: string, cb: Function) => {
+        if(name === 'messageShown') {
+          gistMessageShown = cb
+        } else if(name === 'messageAction') {
+          gistMessageAction = cb
+        }
+      },
+      off: jest.fn(),
     }
-    inAppPlugin = InAppPlugin(settings)
 
-    await analytics.register(inAppPlugin, pageEnrichment)
+    const options: CustomerioSettings = { apiKey: 'foo' }
+    analytics = new Analytics({ writeKey: options.apiKey })
 
-    window.localStorage.clear()
-  })
-
-  function resetCookies(): void {
-    Object.keys(cookie.get()).map((key) => cookie.remove(key))
-  }
-
-  afterEach(async () => {
-    analytics.reset()
-    resetCookies()
-
-    window.localStorage.clear()
+    await analytics.register(InAppPlugin({ siteId: 'siteid'} as InAppPluginSettings), pageEnrichment)
   })
 
   it('should setup gist with defaults', async () => {
@@ -84,14 +76,14 @@ describe('Customer.io In-App Plugin', () => {
 
   it('should trigger journey event for open', async () => {
     const spy = jest.spyOn(analytics, 'track')
-    Gist.messageShown({
+    gistMessageShown({
       properties: {
         gist: {
           campaignId: 'testcampaign',
         },
       },
     })
-    expect(spy).toBeCalledWith('Journey Delivery Metric', {
+    expect(spy).toBeCalledWith('Journeys Delivery Metric', {
       deliveryId: 'testcampaign',
       metric: 'opened',
     })
@@ -99,7 +91,7 @@ describe('Customer.io In-App Plugin', () => {
 
   it('should trigger journey event for non-dismiss click', async () => {
     const spy = jest.spyOn(analytics, 'track')
-    Gist.messageAction({
+    gistMessageAction({
       message: {
         properties: {
           messageId: 'a-test-in-app',
@@ -111,7 +103,7 @@ describe('Customer.io In-App Plugin', () => {
       action: 'action value',
       name: 'action name',
     })
-    expect(spy).toBeCalledWith('Journey Delivery Metric', {
+    expect(spy).toBeCalledWith('Journeys Delivery Metric', {
       deliveryId: 'testcampaign',
       metric: 'clicked',
       actionName: 'action name',
@@ -121,7 +113,7 @@ describe('Customer.io In-App Plugin', () => {
 
   it('should not trigger journey event for dismiss click', async () => {
     const spy = jest.spyOn(analytics, 'track')
-    Gist.messageAction({
+    gistMessageAction({
       message: {
         properties: {
           messageId: 'a-test-in-app',
@@ -135,4 +127,5 @@ describe('Customer.io In-App Plugin', () => {
     })
     expect(spy).toHaveBeenCalledTimes(0)
   })
+
 })

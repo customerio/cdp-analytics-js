@@ -5,10 +5,10 @@ export enum InAppEvents {
     MessageAction = 'in-app:message-action'
 }
 
-export const allEvents:string[] = [InAppEvents.MessageOpened, InAppEvents.MessageDismissed, InAppEvents.MessageError, InAppEvents.MessageAction];
+export const allEvents:string[] = Object.values(InAppEvents);
 
 export enum semanticEvents {
-    JourneyMetric = 'Journey Delivery Metric',
+    JourneyMetric = 'Journeys Delivery Metric',
     Opened = 'opened',
     Clicked = 'clicked',
 }

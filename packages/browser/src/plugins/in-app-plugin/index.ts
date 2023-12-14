@@ -84,8 +84,8 @@ export function InAppPlugin(
         if(!_pluginLoaded)
             return ctx;
 
-        let page:string = ctx.event?.properties?.name || ctx.event?.properties?.url;
-        if(page != "") {
+        const page:string = ctx.event?.properties?.name ?? ctx.event?.properties?.url;
+        if(typeof page === 'string' && page.length > 0) {
             Gist.setCurrentRoute(page);
         }
 
@@ -101,8 +101,8 @@ export function InAppPlugin(
         if(!_gistLoaded)
             return ctx;
 
-        let user = _analytics.user().id();
-        if (typeof user !== 'undefined' && user != null && user != "") {
+        const user = _analytics.user().id();
+        if (typeof user === 'string' && user.length > 0) {
             await Gist.setUserToken(user);
         } else {
             await Gist.clearUserToken();
@@ -139,6 +139,13 @@ export function InAppPlugin(
         },
         identify: syncUserToken,
         page: page,
+        unload: async () => {
+            if(settings.events) {
+                allEvents.forEach((event) => {
+                    _eventTarget.removeEventListener(event, settings?.events as EventListenerOrEventListenerObject);
+                });
+            }
+        },
     }
 
   return customerio;
