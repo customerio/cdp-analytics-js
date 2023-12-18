@@ -83,7 +83,7 @@ describe('Customer.io In-App Plugin', () => {
         },
       },
     })
-    expect(spy).toBeCalledWith('Journeys Delivery Metric', {
+    expect(spy).toBeCalledWith('Report Delivery Event', {
       deliveryId: 'testcampaign',
       metric: 'opened',
     })
@@ -103,7 +103,7 @@ describe('Customer.io In-App Plugin', () => {
       action: 'action value',
       name: 'action name',
     })
-    expect(spy).toBeCalledWith('Journeys Delivery Metric', {
+    expect(spy).toBeCalledWith('Report Delivery Event', {
       deliveryId: 'testcampaign',
       metric: 'clicked',
       actionName: 'action name',
