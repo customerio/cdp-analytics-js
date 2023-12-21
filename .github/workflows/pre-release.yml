@@ -25,15 +25,15 @@ jobs:
           git config --global user.name "Customer.io"
           git config --global user.email "win@customer.io"
 
-      - name: Install Dependencies
+      - name: Install & Build
         run: |
           yarn install --frozen-lockfile
+          yarn build
 
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd packages/node
-          yarn build
           npm version prerelease
           npm publish
