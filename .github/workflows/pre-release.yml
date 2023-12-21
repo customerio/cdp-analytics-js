@@ -26,5 +26,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm version prerelease --preid=alpha
-          npm publish --dry-run
+          cd packages/node
+          yarn version prerelease
+          yarn pack --dry-run
