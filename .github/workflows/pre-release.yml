@@ -26,7 +26,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          yarn install
+          yarn install --frozen-lockfile
           yarn plugin import version
 
       - name: Publish
@@ -35,4 +35,4 @@ jobs:
         run: |
           cd packages/node
           yarn version prerelease
-          yarn pack --dry-run
+          yarn publish
