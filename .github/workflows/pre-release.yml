@@ -28,19 +28,12 @@ jobs:
       - name: Install Dependencies
         run: |
           yarn install --frozen-lockfile
-          yarn plugin import version
-
-      - name: Setup .yarnrc.yml
-        run: |
-          yarn config set npmScopes.customerio.npmRegistryServer "https://npm.pkg.github.com"
-          yarn config set npmScopes.customerio.npmAlwaysAuth true
-          yarn config set npmScopes.customerio.npmAuthToken $NPM_AUTH_TOKEN
-          yarn config
-        env:
-          NPM_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd packages/node
-          yarn version prerelease
-          yarn npm publish
+          yarn build
+          npm version prerelease
+          npm publish
