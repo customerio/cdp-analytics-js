@@ -24,6 +24,8 @@ jobs:
         run: |
           git config --global user.name "Customer.io"
           git config --global user.email "win@customer.io"
+          cat ~/.npmrc
+          cat .npmrc
 
       - name: Install Dependencies
         run: |
