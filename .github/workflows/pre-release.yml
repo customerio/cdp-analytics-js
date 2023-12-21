@@ -25,6 +25,7 @@ jobs:
       - name: Install Dependencies
         run: |
           yarn install
+          yarn plugin import version
 
       - name: Publish
         env:
