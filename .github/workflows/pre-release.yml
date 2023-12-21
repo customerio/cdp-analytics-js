@@ -1,0 +1,25 @@
+name: Pre-Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@customerio'
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm version prerelease --preid=alpha
+          npm publish --dry-run
