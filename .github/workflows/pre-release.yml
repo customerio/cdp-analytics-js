@@ -7,10 +7,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    matrix:
-      package:
-        - core
-        - node
+    strategy:
+      matrix:
+        package:
+          - core
+          - node
 
     steps:
       - uses: actions/checkout@v3
