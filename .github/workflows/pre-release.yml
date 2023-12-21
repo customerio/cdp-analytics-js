@@ -30,6 +30,10 @@ jobs:
         run: |
           yarn install --frozen-lockfile
           yarn plugin import version
+
+      - name: Configure Yarn
+        run: |
+          yarn config set @customerio:registry https://npm.pkg.github.com
           yarn config
 
       - name: Publish
