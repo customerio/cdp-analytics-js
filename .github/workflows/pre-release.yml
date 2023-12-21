@@ -33,7 +33,7 @@ jobs:
 
       - name: Configure Yarn
         run: |
-          yarn config set @customerio:registry https://npm.pkg.github.com
+          cp /home/runner/work/_temp/.npmrc ./
           yarn config
 
       - name: Publish
