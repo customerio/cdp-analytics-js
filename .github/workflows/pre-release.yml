@@ -22,6 +22,10 @@ jobs:
           git config --global user.name "Customer.io"
           git config --global user.email "win@customer.io"
 
+      - name: Install Dependencies
+        run: |
+          yarn install
+
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
