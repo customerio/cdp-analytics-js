@@ -17,6 +17,11 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@customerio'
 
+      - name: Set Git Identity
+        run: |
+          git config --global user.name "Customer.io"
+          git config --global user.email "win@customer.io"
+
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
