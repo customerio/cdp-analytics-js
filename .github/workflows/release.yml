@@ -57,3 +57,4 @@ jobs:
           cd packages/${{ matrix.package }}
           git commit -am "Update version"
           git status
+          git show
