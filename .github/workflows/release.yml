@@ -52,8 +52,6 @@ jobs:
           npm publish
 
       - name: Commit version bump
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           cd packages/${{ matrix.package }}
           git commit -am "Update version"
