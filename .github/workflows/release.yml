@@ -49,6 +49,7 @@ jobs:
         run: |
           cd packages/${{ matrix.package }}
           npm version ${{ github.event.inputs.version }}
+          npm publish
 
       - name: Commit version bump
         env:
@@ -56,5 +57,4 @@ jobs:
         run: |
           cd packages/${{ matrix.package }}
           git commit -am "Update version"
-          git status
-          git show
+          git push
