@@ -49,4 +49,4 @@ jobs:
         run: |
           cd packages/${{ matrix.package }}
           npm version ${{ github.event.inputs.version }}
-          npm publish
+          git status
