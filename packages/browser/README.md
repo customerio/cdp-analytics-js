@@ -27,9 +27,8 @@ If you're using a [different data center](https://customer.io/docs/accounts-and-
 ```ts
 import { AnalyticsBrowser } from '@customerio/cdp-analytics-browser'
 
-// instantiation
 const analytics = AnalyticsBrowser.load({
-  host: 'https://cdp-eu.customer.io',
+  cdnURL: 'https://cdp-eu.customer.io',
   writeKey: '<YOUR_WRITE_KEY>'
 });
 
