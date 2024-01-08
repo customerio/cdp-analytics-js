@@ -19,3 +19,19 @@ document.body?.addEventListener('click', () => {
   analytics.track('document body clicked!')
 })
 ```
+
+## Other Regions
+
+If you're using a [different data center](https://customer.io/docs/accounts-and-workspaces/data-centers/) such as our EU region, you can specify an alternate endpoint:
+
+```ts
+import { AnalyticsBrowser } from '@customerio/cdp-analytics-browser'
+
+// instantiation
+const analytics = AnalyticsBrowser.load({
+  host: 'https://cdp-eu.customer.io',
+  writeKey: '<YOUR_WRITE_KEY>'
+});
+
+analytics.identify('hello world')
+```
