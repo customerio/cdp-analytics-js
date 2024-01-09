@@ -22,7 +22,7 @@ document.body?.addEventListener('click', () => {
 
 ## Other Regions
 
-If you're using a [different data center](https://customer.io/docs/accounts-and-workspaces/data-centers/) such as our EU region, you can specify an alternate endpoint:
+If you're in our [EU data center](https://customer.io/docs/accounts-and-workspaces/data-centers/) you will need to specify an alternate endpoint:
 
 ```ts
 import { AnalyticsBrowser } from '@customerio/cdp-analytics-browser'
@@ -30,7 +30,7 @@ import { AnalyticsBrowser } from '@customerio/cdp-analytics-browser'
 const analytics = AnalyticsBrowser.load({
   cdnURL: 'https://cdp-eu.customer.io',
   writeKey: '<YOUR_WRITE_KEY>'
-});
+})
 
 analytics.identify('hello world')
 ```
