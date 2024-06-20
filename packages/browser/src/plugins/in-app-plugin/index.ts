@@ -168,7 +168,7 @@ export function InAppPlugin(
                 siteId: settings.siteId, 
                 env: settings._env? settings._env : "prod",
                 logging: settings._logging,
-                useAnonymousId: settings.anonymousInApp,
+                useAnonymousSession: settings.anonymousInApp,
             });
             _gistLoaded = true;
 
