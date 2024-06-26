@@ -59,7 +59,7 @@ export function InAppPlugin(
             if (typeof broadcastId != 'undefined' && broadcastId != 0) {
                 const templateId = message?.properties?.gist?.broadcast?.templateId;
                 _analytics.track(JourneysEvents.Content, {
-                    'type': JourneysEvents.ViewedContent,
+                    'actionType': JourneysEvents.ViewedContent,
                     'contentId': broadcastId,
                     'templateId': templateId,
                     'contentType': AnonymousContentType,
@@ -100,7 +100,7 @@ export function InAppPlugin(
             if (typeof broadcastId != 'undefined' && broadcastId != 0) {
                 const templateId:Number = params?.message?.properties?.gist?.broadcast?.templateId;
                 _analytics.track(JourneysEvents.Content, {
-                    'type': JourneysEvents.ClickedContent,
+                    'actionType': JourneysEvents.ClickedContent,
                     'contentId': broadcastId,
                     'templateId': templateId,
                     'contentType': AnonymousContentType,
