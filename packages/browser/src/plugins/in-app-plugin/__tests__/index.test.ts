@@ -163,7 +163,7 @@ describe('Customer.io In-App Plugin', () => {
         },
       })
       expect(spy).toBeCalledWith('Report Content Event', {
-        type: 'viewed_content',
+        actionType: 'viewed_content',
         contentId: 10,
         templateId: 20,
         contentType: 'iab',
@@ -188,7 +188,7 @@ describe('Customer.io In-App Plugin', () => {
         name: 'action name',
       })
       expect(spy).toBeCalledWith('Report Content Event', {
-        type: 'clicked_content',
+        actionType: 'clicked_content',
         contentId: 10,
         templateId: 20,
         contentType: 'iab',
