@@ -56,7 +56,7 @@ export function InAppPlugin(
                 return;
             }
             const broadcastId:Number = message?.properties?.gist?.broadcast?.broadcastIdInt;
-            if (typeof broadcastId != 'undefined' && broadcastId != 0) {
+            if (broadcastId) {
                 const templateId = message?.properties?.gist?.broadcast?.templateId;
                 _analytics.track(JourneysEvents.Content, {
                     'actionType': JourneysEvents.ViewedContent,
@@ -97,7 +97,7 @@ export function InAppPlugin(
                 return;
             }
             const broadcastId:Number = params?.message?.properties?.gist?.broadcast?.broadcastIdInt;
-            if (typeof broadcastId != 'undefined' && broadcastId != 0) {
+            if (broadcastId) {
                 const templateId:Number = params?.message?.properties?.gist?.broadcast?.templateId;
                 _analytics.track(JourneysEvents.Content, {
                     'actionType': JourneysEvents.ClickedContent,
