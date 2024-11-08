@@ -5,14 +5,16 @@ on: [push]
 jobs:
   test:
     runs-on: ubuntu-latest
-
+    
+    strategy:
+      matrix:
+        node-version: [14, 16, 18, 20]
     steps:
       - uses: actions/checkout@v3
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 14
+          node-version: ${{ matrix.node-version }}
           cache: 'yarn'
 
       - name: Cache node modules
@@ -32,4 +34,4 @@ jobs:
 
       - name: Run Tests
         run: |
-          yarn test
+          yarn test 
