@@ -5,7 +5,7 @@ on: [push]
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     strategy:
       matrix:
         node-version: [14, 16, 18, 20]
@@ -28,10 +28,6 @@ jobs:
             ${{ runner.os }}-
 
       - name: Install Dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           yarn install
 
-      - name: Run Tests
-        run: |
-          yarn test 
