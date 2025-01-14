@@ -11,7 +11,7 @@ describe('Customer.io In-App Plugin', () => {
   let gistEventDispatched: Function
 
   beforeEach(async () => {
-    if(typeof analytics !== 'undefined') {
+    if (typeof analytics !== 'undefined') {
       analytics.reset()
     }
 
@@ -24,11 +24,11 @@ describe('Customer.io In-App Plugin', () => {
     Gist.setCurrentRoute = jest.fn()
     Gist.events = {
       on: (name: string, cb: Function) => {
-        if(name === 'messageShown') {
+        if (name === 'messageShown') {
           gistMessageShown = cb
-        } else if(name === 'messageAction') {
+        } else if (name === 'messageAction') {
           gistMessageAction = cb
-        } else if(name === 'eventDispatched') {
+        } else if (name === 'eventDispatched') {
           gistEventDispatched = cb
         }
       },
@@ -38,7 +38,10 @@ describe('Customer.io In-App Plugin', () => {
     const options: CustomerioSettings = { apiKey: 'foo' }
     analytics = new Analytics({ writeKey: options.apiKey })
 
-    await analytics.register(InAppPlugin({ siteId: 'siteid'} as InAppPluginSettings), pageEnrichment)
+    await analytics.register(
+      InAppPlugin({ siteId: 'siteid' } as InAppPluginSettings),
+      pageEnrichment
+    )
   })
 
   it('should setup gist with defaults', async () => {
@@ -143,10 +146,14 @@ describe('Customer.io In-App Plugin', () => {
         },
       },
     })
-    expect(spy).toBeCalledWith('test-event', {
-      attr1: 'val1',
-      attr2: 'val2',
-    }, undefined)
+    expect(spy).toBeCalledWith(
+      'test-event',
+      {
+        attr1: 'val1',
+        attr2: 'val2',
+      },
+      undefined
+    )
   })
 
   describe('Anonymous', () => {
@@ -158,7 +165,7 @@ describe('Customer.io In-App Plugin', () => {
             broadcast: {
               broadcastIdInt: 10,
               templateId: 20,
-            }
+            },
           },
         },
       })
@@ -180,7 +187,7 @@ describe('Customer.io In-App Plugin', () => {
               broadcast: {
                 broadcastIdInt: 10,
                 templateId: 20,
-              }
+              },
             },
           },
         },
@@ -207,7 +214,7 @@ describe('Customer.io In-App Plugin', () => {
               broadcast: {
                 broadcastIdInt: 10,
                 templateId: 20,
-              }
+              },
             },
           },
         },
@@ -216,7 +223,5 @@ describe('Customer.io In-App Plugin', () => {
       })
       expect(spy).toHaveBeenCalledTimes(0)
     })
-
   })
-
 })
