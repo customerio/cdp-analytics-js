@@ -36,7 +36,7 @@ export function InAppPlugin(
             allEvents.forEach((event) => {
                 _eventTarget.addEventListener(event, settings?.events as EventListenerOrEventListenerObject);
             });
-            ['messageShown', 'messageDismissed', 'messageError'].forEach((event) => {
+            ['messageDismissed', 'messageError'].forEach((event) => {
                 Gist.events.on(event, (message: any) => {
                     _eventTarget.dispatchEvent(newEvent(gistToCIO(event), { 
                         messageId: message.messageId,
@@ -65,6 +65,17 @@ export function InAppPlugin(
                     'contentType': ContentType,
                 });
             }
+            if (settings.events) {
+                _eventTarget.dispatchEvent(newEvent(InAppEvents.MessageOpened, { 
+                    messageId: message?.messageId,
+                    deliveryId: message?.properties?.gist?.campaignId,
+                    message: {
+                        dismiss: function() {
+                            Gist.dismissMessage(message?.instanceId);
+                        }
+                    }
+                }));
+            }
         });
 
         Gist.events.on('messageAction', (params: any) => {
@@ -87,7 +98,7 @@ export function InAppPlugin(
                         name: params.name,
                         actionName: params.name,
                         actionValue: params.action,
-                        message:{
+                        message: {
                             dismiss: function() {
                                 Gist.dismissMessage(params?.message?.instanceId);
                             }
