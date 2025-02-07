@@ -90,21 +90,6 @@ export function InAppPlugin(
                     'actionName': params.name,
                     'actionValue': params.action,
                 });
-                if (settings.events) {
-                    _eventTarget.dispatchEvent(newEvent(InAppEvents.MessageAction, {
-                        messageId: params.message.messageId,
-                        deliveryId: deliveryId,
-                        action: params.action,
-                        name: params.name,
-                        actionName: params.name,
-                        actionValue: params.action,
-                        message: {
-                            dismiss: function() {
-                                Gist.dismissMessage(params?.message?.instanceId);
-                            }
-                        }
-                    }));
-                }
                 return;
             }
             const broadcastId:Number = params?.message?.properties?.gist?.broadcast?.broadcastIdInt;
@@ -118,6 +103,21 @@ export function InAppPlugin(
                     'actionName': params.name,
                     'actionValue': params.action,
                 });
+            }
+            if (settings.events) {
+                _eventTarget.dispatchEvent(newEvent(InAppEvents.MessageAction, {
+                    messageId: params.message.messageId,
+                    deliveryId: deliveryId,
+                    action: params.action,
+                    name: params.name,
+                    actionName: params.name,
+                    actionValue: params.action,
+                    message: {
+                        dismiss: function() {
+                            Gist.dismissMessage(params.message.instanceId);
+                        }
+                    }
+                }));
             }
         });
 
