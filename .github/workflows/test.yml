@@ -26,7 +26,6 @@ jobs:
       - name: Build `packages/browser`
         run: |
           cd packages/browser
-          export NODE_OPTIONS=--openssl-legacy-provider
           yarn build
 
       - name: Pack `packages/browser`
