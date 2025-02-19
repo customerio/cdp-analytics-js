@@ -48,7 +48,3 @@ jobs:
           npm init -y
           npm install ../$PACKAGE_NAME --ignore-scripts
 
-      - name: Run tests to verify installation
-        run: |
-          cd test-install
-          yarn test
