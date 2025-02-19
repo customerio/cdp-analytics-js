@@ -1,4 +1,4 @@
-name: Node.js Tests
+name: Verify Browser Package Build & Install
 
 on: [push]
 
