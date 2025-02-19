@@ -45,9 +45,8 @@ jobs:
         run: |
           mkdir test-install
           cd test-install
-          yarn init -y
-          touch yarn.lock
-          yarn add ../$PACKAGE_NAME
+          npm init -y
+          npm install ../$PACKAGE_NAME
 
       - name: Run tests to verify installation
         run: |
