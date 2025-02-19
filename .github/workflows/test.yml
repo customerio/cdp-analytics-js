@@ -20,12 +20,12 @@ jobs:
 
       - name: Install Dependencies for `packages/browser`
         run: |
-          cd packages/browser
           yarn install
 
       - name: Build `packages/browser`
         run: |
           cd packages/browser
+          export NODE_OPTIONS=--openssl-legacy-provider
           yarn build
 
       - name: Pack `packages/browser`
