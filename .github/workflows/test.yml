@@ -24,10 +24,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-build-
             ${{ runner.os }}-
+
       - name: Install Dependencies
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           yarn install
+
       - name: Run Tests
         run: |
           yarn test
