@@ -45,6 +45,7 @@ jobs:
         run: |
           mkdir test-install
           cd test-install
+          touch yarn.lock
           yarn init -y
           yarn add ../$PACKAGE_NAME
 
