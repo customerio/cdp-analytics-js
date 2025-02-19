@@ -46,7 +46,7 @@ jobs:
           mkdir test-install
           cd test-install
           npm init -y
-          npm install ../$PACKAGE_NAME
+          npm install ../$PACKAGE_NAME --ignore-scripts
 
       - name: Run tests to verify installation
         run: |
