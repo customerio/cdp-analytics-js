@@ -49,7 +49,7 @@ jobs:
           cd test-install
           npm init -y
           npm cache clean --force
-          npm install ../$PACKAGE_NAME --ignore-scripts
+          npm install ../packages/browser/$PACKAGE_NAME --ignore-scripts
 
       - name: Check Installed Package Version
         run: |
