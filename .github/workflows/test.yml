@@ -18,28 +18,22 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'yarn'
 
-      - name: Cache node modules
-        id: cache
-        uses: actions/cache@v2
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-build-
-            ${{ runner.os }}-
+      - name: Install Dependencies for `packages/browser`
+        run: |
+          cd packages/browser
+          yarn install
 
-      - name: Install Dependencies
-        run: yarn install
+      - name: Build `packages/browser`
+        run: |
+          cd packages/browser
+          export NODE_OPTIONS=--openssl-legacy-provider
+          yarn build
 
-      - name: Build the package
-        run: export NODE_OPTIONS=--openssl-legacy-provider yarn build
-
-      - name: Pack the package
-        run: npm pack
-        id: pack
-
-      - name: Extract package filename
-        run: echo "PACKAGE_NAME=$(ls *.tgz)" >> $GITHUB_ENV
+      - name: Pack `packages/browser`
+        run: |
+          cd packages/browser
+          npm pack
+          echo "PACKAGE_NAME=$(ls *.tgz)" >> $GITHUB_ENV
 
       - name: Test installing the package in a fresh environment
         run: |
@@ -47,10 +41,9 @@ jobs:
           cd test-install
           npm init -y
           npm cache clean --force
-          npm install ../$PACKAGE_NAME --ignore-scripts
+          npm install ../packages/browser/$PACKAGE_NAME --ignore-scripts
 
       - name: Check Installed Package Version
         run: |
           cd test-install
           jq '.version' node_modules/@customerio/cdp-analytics-browser/package.json
-
