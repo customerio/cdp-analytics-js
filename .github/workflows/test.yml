@@ -46,5 +46,11 @@ jobs:
           mkdir test-install
           cd test-install
           npm init -y
+          npm cache clean --force
           npm install ../$PACKAGE_NAME --ignore-scripts
+
+      - name: Check Installed Package Version
+        run: |
+          cd test-install
+          jq '.version' node_modules/@customerio/cdp-analytics-browser/package.json
 
