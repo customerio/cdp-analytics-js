@@ -42,6 +42,8 @@ jobs:
 
       - name: Test installing the package in a fresh environment
         run: |
+          ls
+          rm -rf node_modules
           cd .github/test-app
           echo $PACKAGE_NAME
           ls ../../packages
@@ -51,9 +53,3 @@ jobs:
           ls -al node_modules/@customerio
           cat package.json
           npm run build
-
-      - name: Check Installed Package Version
-        run: |
-          cd test-install
-          jq '.version' node_modules/@customerio/cdp-analytics-browser/package.json
-
