@@ -40,9 +40,6 @@ jobs:
           npm pack
           echo "PACKAGE_NAME=$(ls *.tgz)" >> $GITHUB_ENV
 
-      - name: Extract package filename
-        run: echo "PACKAGE_NAME=$(ls *.tgz)" >> $GITHUB_ENV
-
       - name: Test installing the package in a fresh environment
         run: |
           cd .github/test-app
