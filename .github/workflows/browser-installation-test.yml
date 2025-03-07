@@ -41,25 +41,10 @@ jobs:
           cd packages/browser
           npm pack
           echo "PACKAGE_NAME=$(ls *.tgz)" >> $GITHUB_ENV
-          tar -tf customerio-cdp-analytics-browser-0.3.1.tgz
-
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: my-artifact
-          path: packages/browser/customerio-cdp-analytics-browser-0.3.1.tgz
 
       - name: Test installing the package in a fresh environment
         run: |
-          ls
-          rm -rf node_modules
           cd .github/test-app
           echo $PACKAGE_NAME
-          ls ../../packages
-          ls ../../packages/browser
-          ls ../../packages/browser/$PACKAGE_NAME
-          npm install
           npm install ../../packages/browser/$PACKAGE_NAME --loglevel=verbose
-          ls -al node_modules/@customerio
-          cat package.json
-          npm run build --debug
+          npm run build
