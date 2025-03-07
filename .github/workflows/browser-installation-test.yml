@@ -44,7 +44,11 @@ jobs:
         run: |
           cd .github/test-app
           echo $PACKAGE_NAME
+          ls ../../packages
+          ls ../../packages/browser
+          ls ../../packages/browser/$PACKAGE_NAME
           npm install ../../packages/browser/$PACKAGE_NAME
+          ls -al node_modules/@customerio
           cat package.json
           npm run build
 
