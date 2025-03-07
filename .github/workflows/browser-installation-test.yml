@@ -41,7 +41,7 @@ jobs:
           cd packages/browser
           npm pack
           echo "PACKAGE_NAME=$(ls *.tgz)" >> $GITHUB_ENV
-          less customerio-cdp-analytics-browser-0.3.1.tgz
+          tar -tf customerio-cdp-analytics-browser-0.3.1.tgz
 
 
       - uses: actions/upload-artifact@v4
