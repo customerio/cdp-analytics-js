@@ -32,13 +32,15 @@ jobs:
         run: yarn install
 
       - name: Build the package
-        run: export NODE_OPTIONS=--openssl-legacy-provider yarn build
+        run: export NODE_OPTIONS=--openssl-legacy-provider
+        run: yarn build
 
       - name: Pack `packages/browser`
         run: |
           cd packages/browser
           npm pack
           echo "PACKAGE_NAME=$(ls *.tgz)" >> $GITHUB_ENV
+          less customerio-cdp-analytics-browser-0.3.1.tgz
 
 
       - uses: actions/upload-artifact@v4
