@@ -45,8 +45,7 @@ jobs:
 
       - name: Test installing the package in a fresh environment
         run: |
-          pwd
-          cd test-app
+          cd .github/test-app
           npm install ../packages/browser/$PACKAGE_NAME
           npm run build
 
