@@ -44,7 +44,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: my-artifact
-          path: packages/browser/$PACKAGE_NAME
+          path: packages/browser/customerio-cdp-analytics-browser-0.3.1.tgz
 
       - name: Test installing the package in a fresh environment
         run: |
