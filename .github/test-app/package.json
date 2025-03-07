@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build": "tsc && vite build"
+    "build": "vite build"
   },
   "devDependencies": {
     "typescript": "~5.7.2",
