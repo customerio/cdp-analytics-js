@@ -8,7 +8,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [14, 16, 18, 20]
+        node-version: [20]
     steps:
       - uses: actions/checkout@v3
 
@@ -49,6 +49,7 @@ jobs:
           ls ../../packages
           ls ../../packages/browser
           ls ../../packages/browser/$PACKAGE_NAME
+          npm install
           npm install ../../packages/browser/$PACKAGE_NAME --loglevel=verbose
           ls -al node_modules/@customerio
           cat package.json
