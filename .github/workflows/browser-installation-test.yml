@@ -32,8 +32,9 @@ jobs:
         run: yarn install
 
       - name: Build the package
-        run: export NODE_OPTIONS=--openssl-legacy-provider
-        run: yarn build
+        run: |
+          export NODE_OPTIONS=--openssl-legacy-provider
+          yarn build
 
       - name: Pack `packages/browser`
         run: |
