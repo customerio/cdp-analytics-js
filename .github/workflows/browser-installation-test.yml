@@ -46,7 +46,9 @@ jobs:
       - name: Test installing the package in a fresh environment
         run: |
           cd .github/test-app
+          echo $PACKAGE_NAME
           npm install ../../packages/browser/$PACKAGE_NAME
+          cat package.json
           npm run build
 
       - name: Check Installed Package Version
