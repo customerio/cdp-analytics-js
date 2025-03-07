@@ -43,13 +43,13 @@ jobs:
       - name: Test installing the package in a fresh environment
         run: |
           ls
+          rm -rf node_modules
           cd .github/test-app
           echo $PACKAGE_NAME
           ls ../../packages
           ls ../../packages/browser
           ls ../../packages/browser/$PACKAGE_NAME
           npm install ../../packages/browser/$PACKAGE_NAME --loglevel=verbose
-          rm -rf node_modules
           ls -al node_modules/@customerio
           cat package.json
-          npm run build --debug 
+          npm run build --debug
