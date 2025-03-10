@@ -1,6 +1,5 @@
-// @ts-ignore
-import * as tsub from '../../vendor/tsub/tsub'
-import type { Matcher, Rule, Store } from '../../vendor/tsub/types'
+import * as tsub from '@segment/tsub'
+import { Matcher, Rule } from '@segment/tsub/dist/store'
 import { DestinationMiddlewareFunction } from '../middleware'
 
 // TODO: update tsub definition
@@ -17,10 +16,10 @@ export type RoutingRule = Rule & {
 export const tsubMiddleware =
   (rules: RoutingRule[]): DestinationMiddlewareFunction =>
   ({ payload, integration, next }): void => {
-    const store = new tsub.Store(rules) as Store
+    const store = new tsub.Store(rules)
     const rulesToApply = store.getRulesByDestinationName(integration)
 
-    rulesToApply.forEach((rule: Rule) => {
+    rulesToApply.forEach((rule) => {
       const { matchers, transformers } = rule
 
       for (let i = 0; i < matchers.length; i++) {
