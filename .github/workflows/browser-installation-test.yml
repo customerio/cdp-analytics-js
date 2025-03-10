@@ -44,6 +44,7 @@ jobs:
 
       - name: Test installing the package in a fresh environment
         run: |
+          rm -rf node_modules
           cd .github/test-app
           echo $PACKAGE_NAME
           npm install ../../packages/browser/$PACKAGE_NAME --loglevel=verbose
