@@ -1,6 +1,5 @@
 cache/
 dist/
-dist.*
 node_modules
 .husky
 .turbo
