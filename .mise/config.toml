@@ -1,5 +1,4 @@
 [env]
-GIT_CONFIG_PARAMETERS="'url.git@github.com:customerio.insteadOf=https://github.com/customerio'"
 MISE_FETCH_REMOTE_VERSIONS_TIMEOUT = '30s'
 
 [tools]
