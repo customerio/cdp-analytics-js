@@ -64,6 +64,7 @@
   "resolutions": {
     "@customerio/cdp-analytics-browser": "workspace:*",
     "@customerio/cdp-analytics-node": "workspace:*",
-    "@customerio/cdp-analytics-core": "workspace:*"
+    "@customerio/cdp-analytics-core": "workspace:*",
+    "axios": "1.8.2"
   }
 }
