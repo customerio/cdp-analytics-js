@@ -1,23 +1,21 @@
 #!/bin/bash
+set -e
 
-# Activate mise environment and use correct Node version
+# Load mise environment
 eval "$(mise env --shell=bash)"
 mise use node@14.21.3
 
-# Save the current directory
+# Save current directory
 ORIGINAL_DIR=$(pwd)
+
+# Move to project root (relative to script)
+cd "$(dirname "$0")/.."
 
 echo "📦 Installing dependencies..."
 yarn install
 
-echo "🏗️   Building project..."
+echo "🏗️  Building project..."
 yarn build
-
-# Check if build succeeded
-if [ $? -ne 0 ]; then
-  echo "❌ Build failed, aborting."
-  exit 1
-fi
 
 echo "📁 Moving to asset_util directory..."
 cd ~/code/cdp/cmds/asset_util
@@ -29,8 +27,18 @@ go run main.go \
 
 echo "⚙️  Running mage manifest..."
 cd ~/code/cdp
+
+# Load mise environment for this directory (which should have mage)
+eval "$(mise env --shell=bash)"
+
+# Check if mage is now available
+if ! command -v mage &> /dev/null; then
+  echo "❌ 'mage' not found in PATH after loading mise environment."
+  echo "   Make sure mage is installed in the cdp project with: mise install mage"
+  exit 1
+fi
+
 mage manifest
 
-# Return to original directory
 cd "$ORIGINAL_DIR"
 echo "✅ Done! Returned to $ORIGINAL_DIR"
