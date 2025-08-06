@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 echo "📦 Installing dependencies..."
 yarn install
 
-echo "🏗️  Building project..."
+echo "🏗️ Building project..."
 yarn build
 
 echo "📁 Moving to asset_util directory..."
