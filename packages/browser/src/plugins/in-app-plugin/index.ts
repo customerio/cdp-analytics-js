@@ -19,7 +19,7 @@ declare global {
 }
 
 // Dynamic loader for Gist from CDN
-function loadGistFromCDN(): Promise<any> {
+function loadGistFromCDN(version: string = 'latest'): Promise<any> {
   return new Promise((resolve, reject) => {
     // Check if Gist is already loaded
     if (window.Gist) {
@@ -29,7 +29,7 @@ function loadGistFromCDN(): Promise<any> {
 
     // Create script tag to load from CDN
     const script = document.createElement('script')
-    script.src = 'https://code.gist.build/web/latest/gist.min.js'
+    script.src = `https://code.gist.build/web/${version}/gist.min.js`
     script.async = true
 
     script.onload = () => {
@@ -59,6 +59,7 @@ export type InAppPluginSettings = {
   _logging: boolean | undefined
 
   anonymousInApp: boolean | false
+  version?: string | undefined
 }
 
 export function InAppPlugin(settings: InAppPluginSettings): Plugin {
@@ -233,7 +234,7 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
 
       try {
         // Load Gist dynamically from CDN
-        _gist = await loadGistFromCDN()
+        _gist = await loadGistFromCDN(settings.version || 'latest')
 
         await _gist.setup({
           siteId: settings.siteId,
