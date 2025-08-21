@@ -2,7 +2,13 @@ import { Analytics } from '../../../core/analytics'
 import { pageEnrichment } from '../../page-enrichment'
 import { CustomerioSettings } from '../../customerio'
 import { InAppPlugin, InAppPluginSettings } from '../'
-import Gist from 'customerio-gist-web'
+
+// Mock the global Gist object
+declare global {
+  interface Window {
+    Gist: any
+  }
+}
 
 describe('Customer.io In-App Plugin', () => {
   let analytics: Analytics
@@ -11,70 +17,116 @@ describe('Customer.io In-App Plugin', () => {
   let gistEventDispatched: Function
 
   beforeEach(async () => {
-    if(typeof analytics !== 'undefined') {
+    if (typeof analytics !== 'undefined') {
       analytics.reset()
     }
 
     jest.resetAllMocks()
     jest.restoreAllMocks()
 
-    Gist.setup = jest.fn()
-    Gist.clearUserToken = jest.fn()
-    Gist.setUserToken = jest.fn()
-    Gist.setCurrentRoute = jest.fn()
-    Gist.events = {
-      on: (name: string, cb: Function) => {
-        if(name === 'messageShown') {
-          gistMessageShown = cb
-        } else if(name === 'messageAction') {
-          gistMessageAction = cb
-        } else if(name === 'eventDispatched') {
-          gistEventDispatched = cb
-        }
+    // Mock the global Gist object that will be loaded from CDN
+    const mockGist = {
+      setup: jest.fn(),
+      clearUserToken: jest.fn(),
+      setUserToken: jest.fn(),
+      setCurrentRoute: jest.fn(),
+      events: {
+        on: (name: string, cb: Function) => {
+          if (name === 'messageShown') {
+            gistMessageShown = cb
+          } else if (name === 'messageAction') {
+            gistMessageAction = cb
+          } else if (name === 'eventDispatched') {
+            gistEventDispatched = cb
+          }
+        },
+        off: jest.fn(),
       },
-      off: jest.fn(),
     }
+
+    // Set up window.Gist mock
+    Object.defineProperty(window, 'Gist', {
+      value: mockGist,
+      writable: true,
+      configurable: true,
+    })
+
+    // Mock document.createElement and appendChild for script loading
+    const mockScript = {
+      src: '',
+      async: false,
+      onload: null as (() => void) | null,
+      onerror: null as (() => void) | null,
+    }
+
+    jest
+      .spyOn(document, 'createElement')
+      .mockImplementation((tagName: string) => {
+        if (tagName === 'script') {
+          return mockScript as any
+        }
+        return jest.requireActual('document').createElement(tagName)
+      })
+
+    jest
+      .spyOn(document.head, 'appendChild')
+      .mockImplementation((element: any) => {
+        // Simulate successful script loading
+        if (element === mockScript) {
+          setTimeout(() => {
+            if (mockScript.onload) mockScript.onload()
+          }, 0)
+        }
+        return element
+      })
 
     const options: CustomerioSettings = { apiKey: 'foo' }
     analytics = new Analytics({ writeKey: options.apiKey })
 
-    await analytics.register(InAppPlugin({ siteId: 'siteid'} as InAppPluginSettings), pageEnrichment)
+    await analytics.register(
+      InAppPlugin({ siteId: 'siteid' } as InAppPluginSettings),
+      pageEnrichment
+    )
+
+    // Verify Gist was set up during plugin registration
+    expect(window.Gist.setup).toBeCalledTimes(1)
   })
 
   it('should setup gist with defaults', async () => {
-    expect(Gist.setup).toBeCalledTimes(1)
-    expect(Gist.setup).toBeCalledWith({
+    expect(window.Gist.setup).toBeCalledTimes(1)
+    expect(window.Gist.setup).toBeCalledWith({
       env: 'prod',
       logging: undefined,
       siteId: 'siteid',
+      useAnonymousSession: undefined,
     })
     // We should clear old gist tokens on setup if we're anonymous
-    expect(Gist.clearUserToken).toBeCalledTimes(1)
+    expect(window.Gist.clearUserToken).toBeCalledTimes(1)
   })
 
   it('should set gist route on page()', async () => {
     await analytics.page('testpage')
-    expect(Gist.setCurrentRoute).toBeCalledWith('testpage')
+    expect(window.Gist.setCurrentRoute).toBeCalledWith('testpage')
   })
 
   it('should set gist userToken on identify()', async () => {
     await analytics.identify('testuser@customer.io')
-    expect(Gist.setUserToken).toBeCalledTimes(1)
-    expect(Gist.setUserToken).toBeCalledWith('testuser@customer.io')
+    expect(window.Gist.setUserToken).toBeCalledTimes(1)
+    expect(window.Gist.setUserToken).toBeCalledWith('testuser@customer.io')
   })
 
   it('should clear gist userToken on reset()', async () => {
     // Once during setup
-    expect(Gist.clearUserToken).toBeCalledTimes(1)
+    expect(window.Gist.clearUserToken).toBeCalledTimes(1)
 
     await analytics.identify('testuser@customer.io')
-    expect(Gist.setUserToken).toBeCalledTimes(1)
-    expect(Gist.setUserToken).toBeCalledWith('testuser@customer.io')
+    expect(window.Gist.setUserToken).toBeCalledTimes(1)
+    expect(window.Gist.setUserToken).toBeCalledWith('testuser@customer.io')
 
     await analytics.reset()
 
     // Once after reset()
-    expect(Gist.clearUserToken).toBeCalledTimes(2)
+    expect(window.Gist.clearUserToken).toBeCalledTimes(2)
   })
 
   it('should trigger journey event for open', async () => {
@@ -143,10 +195,14 @@ describe('Customer.io In-App Plugin', () => {
         },
       },
     })
-    expect(spy).toBeCalledWith('test-event', {
-      attr1: 'val1',
-      attr2: 'val2',
-    }, undefined)
+    expect(spy).toBeCalledWith(
+      'test-event',
+      {
+        attr1: 'val1',
+        attr2: 'val2',
+      },
+      undefined
+    )
   })
 
   describe('Anonymous', () => {
@@ -158,7 +214,7 @@ describe('Customer.io In-App Plugin', () => {
             broadcast: {
               broadcastIdInt: 10,
               templateId: 20,
-            }
+            },
           },
         },
       })
@@ -180,7 +236,7 @@ describe('Customer.io In-App Plugin', () => {
               broadcast: {
                 broadcastIdInt: 10,
                 templateId: 20,
-              }
+              },
             },
           },
         },
@@ -207,7 +263,7 @@ describe('Customer.io In-App Plugin', () => {
               broadcast: {
                 broadcastIdInt: 10,
                 templateId: 20,
-              }
+              },
             },
           },
         },
@@ -216,7 +272,5 @@ describe('Customer.io In-App Plugin', () => {
       })
       expect(spy).toHaveBeenCalledTimes(0)
     })
-
   })
-
 })
