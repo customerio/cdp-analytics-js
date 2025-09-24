@@ -11,7 +11,7 @@ describe('Customer.io In-App Plugin', () => {
   let gistEventDispatched: Function
 
   beforeEach(async () => {
-    if(typeof analytics !== 'undefined') {
+    if (typeof analytics !== 'undefined') {
       analytics.reset()
     }
 
@@ -22,13 +22,15 @@ describe('Customer.io In-App Plugin', () => {
     Gist.clearUserToken = jest.fn()
     Gist.setUserToken = jest.fn()
     Gist.setCurrentRoute = jest.fn()
+    Gist.setCustomAttribute = jest.fn()
+    Gist.clearCustomAttributes = jest.fn()
     Gist.events = {
       on: (name: string, cb: Function) => {
-        if(name === 'messageShown') {
+        if (name === 'messageShown') {
           gistMessageShown = cb
-        } else if(name === 'messageAction') {
+        } else if (name === 'messageAction') {
           gistMessageAction = cb
-        } else if(name === 'eventDispatched') {
+        } else if (name === 'eventDispatched') {
           gistEventDispatched = cb
         }
       },
@@ -38,7 +40,10 @@ describe('Customer.io In-App Plugin', () => {
     const options: CustomerioSettings = { apiKey: 'foo' }
     analytics = new Analytics({ writeKey: options.apiKey })
 
-    await analytics.register(InAppPlugin({ siteId: 'siteid'} as InAppPluginSettings), pageEnrichment)
+    await analytics.register(
+      InAppPlugin({ siteId: 'siteid' } as InAppPluginSettings),
+      pageEnrichment
+    )
   })
 
   it('should setup gist with defaults', async () => {
@@ -75,6 +80,42 @@ describe('Customer.io In-App Plugin', () => {
 
     // Once after reset()
     expect(Gist.clearUserToken).toBeCalledTimes(2)
+  })
+
+  it('should clear custom attributes on reset()', async () => {
+    // First track an event to generate an anonymousId
+    await analytics.track('test event')
+    await analytics.identify('testuser@customer.io')
+
+    await analytics.reset()
+
+    expect(Gist.clearUserToken).toBeCalledTimes(2) // Once during setup, once during reset
+    expect(Gist.clearCustomAttributes).toBeCalledTimes(2)
+    // After reset, a new anonymousId should be set (we don't check the specific value since it may change during reset)
+    expect(Gist.setCustomAttribute).toHaveBeenCalledWith(
+      'cio_anonymous_id',
+      expect.any(String)
+    )
+  })
+
+  it('should set anonymousId custom attribute immediately when plugin loads if available', async () => {
+    // Track an event before registering the plugin to generate an anonymousId
+    await analytics.track('test event')
+    const anonymousId = analytics.user().anonymousId()
+
+    // Reset analytics to clear the plugin
+    analytics.reset()
+    // Re-register the plugin
+    await analytics.register(
+      InAppPlugin({ siteId: 'siteid' } as InAppPluginSettings),
+      pageEnrichment
+    )
+
+    // Should have set the anonymousId custom attribute during plugin load
+    expect(Gist.setCustomAttribute).toBeCalledWith(
+      'cio_anonymous_id',
+      anonymousId
+    )
   })
 
   it('should trigger journey event for open', async () => {
@@ -143,10 +184,14 @@ describe('Customer.io In-App Plugin', () => {
         },
       },
     })
-    expect(spy).toBeCalledWith('test-event', {
-      attr1: 'val1',
-      attr2: 'val2',
-    }, undefined)
+    expect(spy).toBeCalledWith(
+      'test-event',
+      {
+        attr1: 'val1',
+        attr2: 'val2',
+      },
+      undefined
+    )
   })
 
   describe('Anonymous', () => {
@@ -158,7 +203,7 @@ describe('Customer.io In-App Plugin', () => {
             broadcast: {
               broadcastIdInt: 10,
               templateId: 20,
-            }
+            },
           },
         },
       })
@@ -180,7 +225,7 @@ describe('Customer.io In-App Plugin', () => {
               broadcast: {
                 broadcastIdInt: 10,
                 templateId: 20,
-              }
+              },
             },
           },
         },
@@ -207,7 +252,7 @@ describe('Customer.io In-App Plugin', () => {
               broadcast: {
                 broadcastIdInt: 10,
                 templateId: 20,
-              }
+              },
             },
           },
         },
@@ -216,7 +261,5 @@ describe('Customer.io In-App Plugin', () => {
       })
       expect(spy).toHaveBeenCalledTimes(0)
     })
-
   })
-
 })

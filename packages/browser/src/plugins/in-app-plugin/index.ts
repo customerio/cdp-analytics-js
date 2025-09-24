@@ -30,6 +30,13 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
   let _pluginLoaded = false
   const _eventTarget: EventTarget = new EventTarget()
 
+  async function setAnonymousId() {
+    const anonymousId = _analytics.user().anonymousId()
+    if (anonymousId) {
+      await Gist.setCustomAttribute('cio_anonymous_id', anonymousId)
+    }
+  }
+
   function attachListeners() {
     if (!_gistLoaded || _pluginLoaded) return
 
@@ -165,6 +172,8 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
 
   async function reset(ctx: Context): Promise<Context> {
     await Gist.clearUserToken()
+    await Gist.clearCustomAttributes()
+    await setAnonymousId()
     return ctx
   }
 
@@ -192,6 +201,8 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         _error("siteId is required. Can't initialize.")
         return ctx
       }
+
+      await setAnonymousId()
 
       await Gist.setup({
         siteId: settings.siteId,
