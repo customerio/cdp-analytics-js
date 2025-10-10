@@ -240,6 +240,7 @@ export class Analytics extends NodeEmitter implements CoreAnalytics {
       context,
       timestamp,
       integrations,
+      messageId,
     }: TrackParams,
     callback?: Callback
   ): void {
@@ -249,6 +250,7 @@ export class Analytics extends NodeEmitter implements CoreAnalytics {
       anonymousId,
       timestamp,
       integrations,
+      messageId,
     })
 
     this._dispatch(CustomerioEvent, callback)

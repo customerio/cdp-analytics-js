@@ -200,6 +200,7 @@ export class EventFactory {
     const eventOverrideKeys: CoreOptionKeys[] = [
       'userId',
       'anonymousId',
+      'messageId',
       'timestamp',
     ]
 
@@ -271,7 +272,7 @@ export class EventFactory {
 
     const evt: CoreCustomerioEvent = {
       ...body,
-      messageId: this.createMessageId(),
+      messageId: body.messageId ?? this.createMessageId(),
     }
 
     validateEvent(evt)

@@ -32,6 +32,7 @@ export interface CoreOptions {
   context?: CoreExtraContext
   anonymousId?: string
   userId?: string
+  messageId?: string
   traits?: Traits
   // ugh, this is ugly, but we allow literally any property to be passed to options (which get spread onto the event)
   [key: string]: any

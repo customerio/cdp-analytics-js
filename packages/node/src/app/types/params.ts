@@ -71,4 +71,5 @@ export type TrackParams = {
   context?: ExtraContext
   timestamp?: Timestamp
   integrations?: Integrations
+  messageId?: string
 } & IdentityOptions
