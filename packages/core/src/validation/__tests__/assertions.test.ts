@@ -4,6 +4,7 @@ import { validateEvent } from '../assertions'
 const baseEvent: Partial<CoreCustomerioEvent> = {
   userId: 'foo',
   event: 'Test Event',
+  messageId: 'foo',
 }
 describe('validateEvent', () => {
   test('should be capable of working with empty properties and traits', () => {
@@ -40,6 +41,7 @@ describe('validateEvent', () => {
   test('identify: traits should be an object', () => {
     expect(() =>
       validateEvent({
+        ...baseEvent,
         type: 'identify',
         traits: undefined,
       })
@@ -125,5 +127,29 @@ describe('validateEvent', () => {
         anonymousId: undefined,
       })
     ).toThrow()
+  })
+
+  test('should fail if messageId is _not_ string', () => {
+    expect(() =>
+      validateEvent({
+        ...baseEvent,
+        type: 'track',
+        properties: {},
+        userId: undefined,
+        anonymousId: 'foo',
+        messageId: 'bar',
+      })
+    ).not.toThrow()
+
+    expect(() =>
+      validateEvent({
+        ...baseEvent,
+        type: 'track',
+        properties: {},
+        userId: undefined,
+        anonymousId: 'foo',
+        messageId: 123 as any,
+      })
+    ).toThrow(/messageId/)
   })
 })

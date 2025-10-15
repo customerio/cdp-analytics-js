@@ -30,6 +30,11 @@ export type AliasParams = {
   context?: ExtraContext
   timestamp?: Timestamp
   integrations?: Integrations
+  /**
+   * Override the default messageId for the purposes of deduping events. Using a uuid library is strongly encouraged.
+   * @link https://docs.customer.io/integrations/data-in/source-spec/common-fields/#messageid-deduplicate-calls
+   */
+  messageId?: string
 }
 
 export type GroupParams = {
@@ -41,6 +46,11 @@ export type GroupParams = {
   context?: ExtraContext
   timestamp?: Timestamp
   integrations?: Integrations
+  /**
+   * Override the default messageId for the purposes of deduping events. Using a uuid library is strongly encouraged.
+   * @link https://docs.customer.io/integrations/data-in/source-spec/common-fields/#messageid-deduplicate-calls
+   */
+  messageId?: string
 } & (IdentityOptions | { userId?: string; anonymousId?: string })
 
 export type IdentifyParams = {
@@ -51,6 +61,11 @@ export type IdentifyParams = {
   context?: ExtraContext
   timestamp?: Timestamp
   integrations?: Integrations
+  /**
+   * Override the default messageId for the purposes of deduping events. Using a uuid library is strongly encouraged.
+   * @link https://docs.customer.io/integrations/data-in/source-spec/common-fields/#messageid-deduplicate-calls
+   */
+  messageId?: string
 } & IdentityOptions
 
 export type PageParams = {
@@ -63,6 +78,11 @@ export type PageParams = {
   timestamp?: Timestamp
   context?: ExtraContext
   integrations?: Integrations
+  /**
+   * Override the default messageId for the purposes of deduping events. Using a uuid library is strongly encouraged.
+   * @link https://docs.customer.io/integrations/data-in/source-spec/common-fields/#messageid-deduplicate-calls
+   */
+  messageId?: string
 } & IdentityOptions
 
 export type TrackParams = {
@@ -71,4 +91,9 @@ export type TrackParams = {
   context?: ExtraContext
   timestamp?: Timestamp
   integrations?: Integrations
+  /**
+   * Override the default messageId for the purposes of deduping events. Using a uuid library is strongly encouraged.
+   * @link https://docs.customer.io/integrations/data-in/source-spec/common-fields/#messageid-deduplicate-calls
+   */
+  messageId?: string
 } & IdentityOptions
