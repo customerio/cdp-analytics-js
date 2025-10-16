@@ -350,6 +350,16 @@ describe('Event Factory', () => {
         innerProp: '👻',
       })
     })
+
+    test('accepts a messageId', () => {
+      const messageId = 'business-id-123'
+      const track = factory.track('Order Completed', shoes, {
+        messageId,
+      })
+
+      expect(track.context).toEqual({})
+      expect(track.messageId).toEqual(messageId)
+    })
   })
 
   describe('normalize', () => {

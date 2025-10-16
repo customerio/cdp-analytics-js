@@ -10,6 +10,15 @@ export class ValidationError extends Error {
   }
 }
 
+export function assertMessageId(event: CoreCustomerioEvent): void {
+  if (!event.messageId) {
+    throw new ValidationError('messageId', 'messageId is missing')
+  }
+  if (!isString(event.messageId)) {
+    throw new ValidationError('messageId', 'messageId is not a string')
+  }
+}
+
 export function validateEvent(event?: CoreCustomerioEvent | null) {
   if (!event || typeof event !== 'object') {
     throw new ValidationError('event', 'Event is missing')
@@ -18,6 +27,8 @@ export function validateEvent(event?: CoreCustomerioEvent | null) {
   if (!isString(event.type)) {
     throw new ValidationError('type', 'type is not a string')
   }
+
+  assertMessageId(event)
 
   if (event.type === 'track') {
     if (!isString(event.event)) {
