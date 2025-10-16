@@ -7,3 +7,29 @@ MISE_ARCH="x86_64"
 node = "14.21.3"
 yarn = "3.2.1"
 python = "3.11"
+
+[tasks.build]
+run = 'yarn && yarn install && yarn build'
+
+[tasks.test]
+depends = ['build']
+
+run = 'yarn test'
+
+[tasks.lint]
+run = 'yarn lint'
+
+[tasks.pack]
+description = 'Build packages locally, for local testing'
+depends = ['build']
+
+run = [
+    'npm run core pack',
+    'npm run browser pack',
+    'npm run node pack',
+    'ls -lat packages/*/package.tgz'
+]
+
+[tasks.clean]
+description = 'Remove build artifacts'
+run = 'npm run clean'
