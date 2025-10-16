@@ -1,5 +1,8 @@
 name: Release
 
+run-name: >-
+  ${{ github.event.inputs.dry-run == 'true' && 'Release dry-run' || 'Release' }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -14,7 +17,7 @@ on:
           - patch
       dry-run:
         type: boolean
-        description: Whether to perform a dry run or not
+        description: Perform a dry run
         required: true
         default: true
 
