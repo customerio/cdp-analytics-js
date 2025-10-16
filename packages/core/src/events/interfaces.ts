@@ -34,7 +34,7 @@ export interface CoreOptions {
   userId?: string
   traits?: Traits
   /**
-   * Override the messageId. Under normal circumstances, this is not recommended -- but neccessary for deduping events.
+   * Override the messageId. Under normal circumstances, this is not recommended -- but necessary for deduping events.
    *
    * **Currently, This option only works in `@customerio/cdp-analytics-node`.**
    */
