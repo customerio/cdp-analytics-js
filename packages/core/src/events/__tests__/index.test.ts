@@ -360,17 +360,6 @@ describe('Event Factory', () => {
       expect(track.context).toEqual({})
       expect(track.messageId).toEqual(messageId)
     })
-
-    it('should ignore undefined options', () => {
-      const event = factory.track(
-        'Order Completed',
-        { ...shoes },
-        { timestamp: undefined, traits: { foo: 123 } }
-      )
-
-      expect(typeof event.timestamp).toBe('object')
-      expect(isDate(event.timestamp)).toBeTruthy()
-    })
   })
 
   describe('normalize', () => {
@@ -400,5 +389,16 @@ describe('Event Factory', () => {
         context: {},
       })
     })
+  })
+
+  it('should ignore undefined options', () => {
+    const event = factory.track(
+      'Order Completed',
+      { ...shoes },
+      { timestamp: undefined, traits: { foo: 123 } }
+    )
+
+    expect(typeof event.timestamp).toBe('object')
+    expect(isDate(event.timestamp)).toBeTruthy()
   })
 })

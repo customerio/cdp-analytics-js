@@ -11,8 +11,11 @@ export class ValidationError extends Error {
 }
 
 export function assertMessageId(event: CoreCustomerioEvent): void {
+  if (!event.messageId) {
+    throw new ValidationError('messageId', 'messageId is missing')
+  }
   if (!isString(event.messageId)) {
-    throw new ValidationError('.messageId', 'messageId is not a string')
+    throw new ValidationError('messageId', 'messageId is not a string')
   }
 }
 
