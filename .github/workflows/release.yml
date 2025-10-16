@@ -1,5 +1,8 @@
 name: Release
 
+run-name: >-
+  ${{ github.event.inputs.dry-run == 'true' && 'Release dry-run' || 'Release' }}
+
 on:
   workflow_dispatch:
     inputs:
