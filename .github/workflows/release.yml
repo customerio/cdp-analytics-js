@@ -24,19 +24,26 @@ on:
 jobs:
   npm:
     runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup node.js for NPM
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 14
+          node-version: 18
           cache: 'yarn'
           registry-url: 'https://registry.npmjs.org'
           scope: '@customerio'
+
+      - name: Install npm 11.5.1+ for OIDC support
+        run: npm install -g npm@latest
 
       - name: Install
         run: |
@@ -64,8 +71,6 @@ jobs:
 
       - name: Publish (dry-run)
         if: ${{ github.event.inputs.dry-run == 'true' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for package in core browser node; do
             pushd packages/$package
@@ -75,8 +80,6 @@ jobs:
 
       - name: Publish
         if: ${{ github.event.inputs.dry-run == 'false' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for package in core browser node; do
             pushd packages/$package
@@ -88,14 +91,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup node.js for GitHub
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 14
+          node-version: 18
           cache: 'yarn'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@customerio'
@@ -152,7 +155,7 @@ jobs:
     needs: [npm, github]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
