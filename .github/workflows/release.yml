@@ -51,7 +51,7 @@ jobs:
 
       - name: Install
         run: |
-          yarn install --frozen-lockfile
+          yarn install --immutable
 
       - name: Bump core
         run: |
