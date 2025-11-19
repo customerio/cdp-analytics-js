@@ -20,6 +20,10 @@ on:
         description: Perform a dry run
         required: true
         default: true
+  pull_request:
+    types:
+      - opened
+      - synchronize
 
 jobs:
   npm:
@@ -52,100 +56,32 @@ jobs:
       - name: Bump core
         run: |
           cd packages/core
-          yarn version ${{ github.event.inputs.version }}
+          yarn version 0.0.0-test-oidc --no-git-tag-version
+          # yarn version ${{ github.event.inputs.version }}
 
       - name: Bump browser
         run: |
           cd packages/browser
-          yarn version ${{ github.event.inputs.version }}
+          yarn version 0.0.0-test-oidc --no-git-tag-version
+          # yarn version ${{ github.event.inputs.version }}
           yarn run build-prep
 
       - name: Bump node
         run: |
           cd packages/node
-          yarn version ${{ github.event.inputs.version }}
+          yarn version 0.0.0-test-oidc --no-git-tag-version
+          # yarn version ${{ github.event.inputs.version }}
 
       - name: Build
         run: |
           yarn build
 
       - name: Publish (dry-run)
-        if: ${{ github.event.inputs.dry-run == 'true' }}
         run: |
           for package in core browser node; do
             pushd packages/$package
-            npm publish --dry-run
-            popd
-          done
-
-      - name: Publish
-        if: ${{ github.event.inputs.dry-run == 'false' }}
-        run: |
-          for package in core browser node; do
-            pushd packages/$package
-            npm publish
-            popd
-          done
-
-  github:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup node.js for GitHub
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: 'yarn'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@customerio'
-
-      - name: Install
-        run: |
-          yarn install --frozen-lockfile
-
-      - name: Bump core
-        run: |
-          cd packages/core
-          yarn version ${{ github.event.inputs.version }}
-
-      - name: Bump browser
-        run: |
-          cd packages/browser
-          yarn version ${{ github.event.inputs.version }}
-          yarn run build-prep
-
-      - name: Bump node
-        run: |
-          cd packages/node
-          yarn version ${{ github.event.inputs.version }}
-
-      - name: Build
-        run: |
-          yarn build
-
-      - name: Publish (dry-run)
-        if: ${{ github.event.inputs.dry-run == 'true' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for package in core browser node; do
-            pushd packages/$package
-            npm publish --dry-run
-            popd
-          done
-
-      - name: Publish
-        if: ${{ github.event.inputs.dry-run == 'false' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for package in core browser node; do
-            pushd packages/$package
-            npm publish
+            echo "Publishing $package"
+            npm publish --dry-run --tag test-oidc
             popd
           done
 
