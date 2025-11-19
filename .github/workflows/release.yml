@@ -69,7 +69,7 @@ jobs:
       - name: Bump node
         run: |
           cd packages/node
-          yarn version 0.0.0-test-oidc --no-git-tag-version
+          yarn version 0.0.0-test-oidc
           # yarn version ${{ github.event.inputs.version }}
 
       - name: Build
