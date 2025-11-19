@@ -56,13 +56,13 @@ jobs:
       - name: Bump core
         run: |
           cd packages/core
-          yarn version 0.0.0-test-oidc --no-git-tag-version
+          yarn version 0.0.0-test-oidc
           # yarn version ${{ github.event.inputs.version }}
 
       - name: Bump browser
         run: |
           cd packages/browser
-          yarn version 0.0.0-test-oidc --no-git-tag-version
+          yarn version 0.0.0-test-oidc
           # yarn version ${{ github.event.inputs.version }}
           yarn run build-prep
 
