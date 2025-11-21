@@ -20,10 +20,6 @@ on:
         description: Perform a dry run
         required: true
         default: true
-  pull_request:
-    types:
-      - opened
-      - synchronize
 
 jobs:
   npm:
@@ -51,26 +47,85 @@ jobs:
 
       - name: Install
         run: |
-          yarn install --immutable
+          yarn install --frozen-lockfile
 
       - name: Bump core
         run: |
           cd packages/core
-          yarn version 0.0.0-test-oidc
-          # yarn version ${{ github.event.inputs.version }}
+          yarn version ${{ github.event.inputs.version }}
 
       - name: Bump browser
         run: |
           cd packages/browser
-          yarn version 0.0.0-test-oidc
-          # yarn version ${{ github.event.inputs.version }}
+          yarn version ${{ github.event.inputs.version }}
           yarn run build-prep
 
       - name: Bump node
         run: |
           cd packages/node
-          yarn version 0.0.0-test-oidc
-          # yarn version ${{ github.event.inputs.version }}
+          yarn version ${{ github.event.inputs.version }}
+
+      - name: Build
+        run: |
+          yarn build
+        env:
+          # Node.js 17+ uses OpenSSL 3.0, and older webpack versions (before 5.95.0) don't support it
+          # This flag allows webpack to work with Node.js 20
+          NODE_OPTIONS: --openssl-legacy-provider
+
+      - name: Publish (dry-run)
+        if: ${{ github.event.inputs.dry-run == 'true' }}
+        run: |
+          for package in core browser node; do
+            pushd packages/$package
+            npm publish --dry-run
+            popd
+          done
+
+      - name: Publish
+        if: ${{ github.event.inputs.dry-run == 'false' }}
+        run: |
+          for package in core browser node; do
+            pushd packages/$package
+            npm publish
+            popd
+          done
+
+  github:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup node.js for GitHub
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'yarn'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@customerio'
+      
+      - name: Install
+        run: |
+          yarn install --frozen-lockfile
+
+      - name: Bump core
+        run: |
+          cd packages/core
+          yarn version ${{ github.event.inputs.version }}
+
+      - name: Bump browser
+        run: |
+          cd packages/browser
+          yarn version ${{ github.event.inputs.version }}
+          yarn run build-prep
+
+      - name: Bump node
+        run: |
+          cd packages/node
+          yarn version ${{ github.event.inputs.version }}
 
       - name: Build
         run: |
@@ -79,11 +134,60 @@ jobs:
           NODE_OPTIONS: --openssl-legacy-provider
 
       - name: Publish (dry-run)
+        if: ${{ github.event.inputs.dry-run == 'true' }}
         run: |
           for package in core browser node; do
             pushd packages/$package
-            echo "Publishing $package"
-            npm publish --tag test-oidc
+            npm publish --dry-run
             popd
           done
 
+      - name: Publish
+        if: ${{ github.event.inputs.dry-run == 'false' }}
+        run: |
+          for package in core browser node; do
+            pushd packages/$package
+            npm publish
+            popd
+          done
+
+  commit:
+    runs-on: ubuntu-latest
+
+    needs: [npm, github]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set Git Identity
+        run: |
+          git config --global user.name "Customer.io"
+          git config --global user.email "win@customer.io"
+      - name: Install
+        run: |
+          yarn install --frozen-lockfile
+      - name: Bump core
+        run: |
+          cd packages/core
+          yarn version ${{ github.event.inputs.version }}
+      - name: Bump browser
+        run: |
+          cd packages/browser
+          yarn version ${{ github.event.inputs.version }}
+          yarn run build-prep
+      - name: Bump node
+        run: |
+          cd packages/node
+          yarn version ${{ github.event.inputs.version }}
+      - name: Show commit (dry-run)
+        if: ${{ github.event.inputs.dry-run == 'true' }}
+        run: |
+          git commit -am "Update version"
+          git show
+      - name: Push changes
+        if: ${{ github.event.inputs.dry-run == 'false' }}
+        run: |
+          git commit -am "Update version"
+          git push
