@@ -110,7 +110,10 @@ jobs:
           cache: 'yarn'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@customerio'
-      
+
+      - name: Install npm 11.5.1+ for OIDC support
+        run: npm install -g npm@latest
+
       - name: Install
         run: |
           yarn install --frozen-lockfile
@@ -157,6 +160,8 @@ jobs:
 
   commit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     needs: [npm, github]
 
