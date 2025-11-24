@@ -68,10 +68,6 @@ jobs:
       - name: Build
         run: |
           yarn build
-        env:
-          # Node.js 17+ uses OpenSSL 3.0, and older webpack versions (before 5.95.0) don't support it
-          # This flag allows webpack to work with Node.js 20
-          NODE_OPTIONS: --openssl-legacy-provider
 
       - name: Publish (dry-run)
         if: ${{ github.event.inputs.dry-run == 'true' }}
@@ -174,27 +170,33 @@ jobs:
         run: |
           git config --global user.name "Customer.io"
           git config --global user.email "win@customer.io"
+
       - name: Install
         run: |
           yarn install --frozen-lockfile
+
       - name: Bump core
         run: |
           cd packages/core
           yarn version ${{ github.event.inputs.version }}
+
       - name: Bump browser
         run: |
           cd packages/browser
           yarn version ${{ github.event.inputs.version }}
           yarn run build-prep
+
       - name: Bump node
         run: |
           cd packages/node
           yarn version ${{ github.event.inputs.version }}
+
       - name: Show commit (dry-run)
         if: ${{ github.event.inputs.dry-run == 'true' }}
         run: |
           git commit -am "Update version"
           git show
+
       - name: Push changes
         if: ${{ github.event.inputs.dry-run == 'false' }}
         run: |
