@@ -67,8 +67,6 @@ jobs:
       - name: Build
         run: |
           yarn build
-        env:
-          NODE_OPTIONS: --openssl-legacy-provider
 
       - name: Publish (dry-run)
         if: ${{ github.event.inputs.dry-run == 'true' }}
@@ -134,11 +132,11 @@ jobs:
       - name: Build
         run: |
           yarn build
-        env:
-          NODE_OPTIONS: --openssl-legacy-provider
 
       - name: Publish (dry-run)
         if: ${{ github.event.inputs.dry-run == 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for package in core browser node; do
             pushd packages/$package
@@ -148,6 +146,8 @@ jobs:
 
       - name: Publish
         if: ${{ github.event.inputs.dry-run == 'false' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for package in core browser node; do
             pushd packages/$package
