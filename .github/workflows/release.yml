@@ -39,6 +39,7 @@ jobs:
         with:
           node-version: 20
           cache: 'yarn'
+          registry-url: 'https://registry.npmjs.org'
           scope: '@customerio'
 
       - name: Install npm 11.5.1+ for OIDC support
