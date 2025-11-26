@@ -39,7 +39,6 @@ jobs:
         with:
           node-version: 20
           cache: 'yarn'
-          registry-url: 'https://registry.npmjs.org'
           scope: '@customerio'
 
       - name: Install npm 11.5.1+ for OIDC support
@@ -68,6 +67,8 @@ jobs:
       - name: Build
         run: |
           yarn build
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
 
       - name: Publish (dry-run)
         if: ${{ github.event.inputs.dry-run == 'true' }}
