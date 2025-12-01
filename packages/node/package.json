@@ -1,6 +1,11 @@
 {
   "name": "@customerio/cdp-analytics-node",
   "version": "0.3.8",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/customerio/cdp-analytics-js",
+    "directory": "packages/node"
+  },
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/types/index.d.ts",
