@@ -74,7 +74,7 @@ jobs:
         run: |
           for package in core browser node; do
             pushd packages/$package
-            npm publish --dry-run
+            npm publish --dry-run --access public
             popd
           done
 
@@ -83,7 +83,7 @@ jobs:
         run: |
           for package in core browser node; do
             pushd packages/$package
-            npm publish
+            npm publish --access public
             popd
           done
 
