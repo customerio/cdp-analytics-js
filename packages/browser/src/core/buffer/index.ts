@@ -241,6 +241,12 @@ export class AnalyticsBuffered
   register = this._createMethod('register')
   deregister = this._createMethod('deregister')
   user = this._createMethod('user')
+  inbox(...topics: string[]): import('../../plugins/in-app-plugin').InboxAPI {
+    if (this.instance?.inbox) {
+      return this.instance.inbox(...topics)
+    }
+    throw new Error('Customer.io In-App Plugin is not loaded yet. Ensure the plugin is initialized before calling inbox().')
+  }
   readonly VERSION = version
 
   private _createMethod<T extends PreInitMethodName>(methodName: T) {

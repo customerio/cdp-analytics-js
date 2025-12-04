@@ -131,6 +131,7 @@ export class Analytics
   integrations: Integrations
   options: InitOptions
   queue: EventQueue
+  inbox?: (...topics: string[]) => import('../../plugins/in-app-plugin').InboxAPI
 
   constructor(
     settings: AnalyticsSettings,

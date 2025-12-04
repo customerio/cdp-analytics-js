@@ -11,8 +11,11 @@ import {
   ContentType,
 } from './events'
 import Gist from 'customerio-gist-web'
+import type { InboxAPI, InboxMessage, GistInboxMessage } from './inbox_messages'
+import { createInboxAPI } from './inbox_messages'
 
 export { InAppEvents }
+export type { InboxAPI, InboxMessage }
 
 export type InAppPluginSettings = {
   siteId: string | undefined
@@ -93,6 +96,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
           templateId: templateId,
           contentType: ContentType,
         })
+      }
+    })
+
+    Gist.events.on('inboxMessageAction', (params: any) => {
+      if (params?.message && params?.action !== '') {
+        _handleInboxMessageAction(_analytics, params.message, params.action)
       }
     })
 
@@ -214,6 +223,14 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
 
       await syncUserToken(ctx)
       attachListeners()
+      ;(instance as any).inbox = (...topics: string[]): InboxAPI => {
+        if (!_pluginLoaded) {
+          throw new Error(
+            'Customer.io In-App Plugin is not loaded yet. Ensure the plugin is initialized before calling inbox().'
+          )
+        }
+        return createInboxAPI(Gist, topics)
+      }
 
       _pluginLoaded = true
 
@@ -234,6 +251,19 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
   }
 
   return customerio
+}
+
+function _handleInboxMessageAction(
+  analyticsInstance: Analytics,
+  message: GistInboxMessage,
+  action: string
+) {
+  if (action === 'opened' && message?.deliveryId !== '') {
+    void analyticsInstance.track(JourneysEvents.Metric, {
+      deliveryId: message.deliveryId,
+      metric: JourneysEvents.Opened,
+    })
+  }
 }
 
 function _error(msg: string) {
