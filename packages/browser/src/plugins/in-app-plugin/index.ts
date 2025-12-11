@@ -258,7 +258,8 @@ function _handleInboxMessageAction(
   message: GistInboxMessage,
   action: string
 ) {
-  if (action === 'opened' && message?.deliveryId !== '') {
+  const deliveryId = message?.deliveryId
+  if (action === 'opened' && typeof deliveryId !== 'undefined' && deliveryId !== '') {
     void analyticsInstance.track(JourneysEvents.Metric, {
       deliveryId: message.deliveryId,
       metric: JourneysEvents.Opened,

@@ -97,7 +97,7 @@ async function getFilteredMessages(
   messages: GistInboxMessage[] | null
 ): Promise<GistInboxMessage[]> {
   let allMessages = messages
-  if (!allMessages || !Array.isArray(allMessages) || allMessages.length === 0) {
+  if (!allMessages || !Array.isArray(allMessages)) {
     allMessages = (await gist.getInboxMessages()) as GistInboxMessage[]
   }
 
@@ -136,7 +136,6 @@ export function createInboxAPI(gist: any, topics: string[]): InboxAPI {
     },
     onUpdates: (callback: (messages: InboxMessage[]) => void): (() => void) => {
       const handler = async (gistMessages: GistInboxMessage[]) => {
-        console.log('onUpdates handler called with messages:', gistMessages)
         try {
           const filteredMessages = await getFilteredMessages(
             gist,
