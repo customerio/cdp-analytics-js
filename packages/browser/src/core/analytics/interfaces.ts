@@ -12,6 +12,7 @@ import type { Context } from '../context'
 import type { CustomerioEvent } from '../events'
 import type { Group, User } from '../user'
 import type { LegacyIntegration } from '../../plugins/ajs-destination/types'
+import type { InboxAPI } from '../../plugins/in-app-plugin'
 import { CoreAnalytics } from '@customerio/cdp-analytics-core'
 
 // we can define a contract because:
@@ -88,6 +89,13 @@ export interface AnalyticsCore extends CoreAnalytics {
   deregister(...plugins: string[]): Promise<Context>
   user(): User
   readonly VERSION: string
+  /**
+   * Access inbox functionality provided by the Customer.io In-App Plugin.
+   * Only available when the In-App Plugin is loaded.
+   * @param topics - Optional topics to filter inbox messages
+   * @returns InboxAPI interface for managing inbox messages
+   */
+  inbox?(...topics: string[]): InboxAPI
 }
 
 /**
