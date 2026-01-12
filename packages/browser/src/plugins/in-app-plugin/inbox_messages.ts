@@ -1,3 +1,6 @@
+import { Analytics } from '../../core/analytics'
+import { JourneysEvents } from './events'
+
 export interface GistInboxMessage {
   messageType: string
   expiry: string
@@ -23,6 +26,12 @@ export interface InboxMessage {
 
   // When the message was sent
   readonly sentAt: string
+
+  /**
+   * Tracks a click metric for the message with an optional tracked response value.
+   * @returns void
+   */
+  trackClick(trackedResponse?: string): void
 
   /**
    * Marks this message as opened
@@ -71,6 +80,7 @@ export interface InboxAPI {
 }
 
 function createInboxMessage(
+  analyticsInstance: Analytics,
   gist: any,
   gistMessage: GistInboxMessage
 ): InboxMessage {
@@ -79,6 +89,14 @@ function createInboxMessage(
     messageId: gistMessage.queueId,
     opened: gistMessage?.opened === true,
     properties: gistMessage.properties,
+    trackClick: (trackedResponse?: string) => {
+      void analyticsInstance.track(JourneysEvents.Metric, {
+        deliveryId: gistMessage.deliveryId,
+        metric: JourneysEvents.Clicked,
+        actionName: trackedResponse,
+        // actionValue: params.action, don't know
+      })
+    },
     markOpened: async () => {
       await gist.updateInboxMessageOpenState(gistMessage.queueId, true)
     },
@@ -118,7 +136,7 @@ async function getFilteredMessages(
   })
 }
 
-export function createInboxAPI(gist: any, topics: string[]): InboxAPI {
+export function createInboxAPI(analyticsInstance: Analytics, gist: any, topics: string[]): InboxAPI {
   return {
     total: async () => {
       const messages = await getFilteredMessages(gist, topics, null)
@@ -132,7 +150,7 @@ export function createInboxAPI(gist: any, topics: string[]): InboxAPI {
     },
     messages: async (): Promise<InboxMessage[]> => {
       const messages = await getFilteredMessages(gist, topics, null)
-      return messages.map((msg) => createInboxMessage(gist, msg))
+      return messages.map((msg) => createInboxMessage(analyticsInstance, gist, msg))
     },
     onUpdates: (callback: (messages: InboxMessage[]) => void): (() => void) => {
       const handler = async (gistMessages: GistInboxMessage[]) => {
@@ -143,7 +161,7 @@ export function createInboxAPI(gist: any, topics: string[]): InboxAPI {
             gistMessages
           )
           const inboxMessages = filteredMessages.map((msg) =>
-            createInboxMessage(gist, msg)
+            createInboxMessage(analyticsInstance, gist, msg)
           )
 
           callback(inboxMessages)

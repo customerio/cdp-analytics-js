@@ -229,7 +229,7 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
             'Customer.io In-App Plugin is not loaded yet. Ensure the plugin is initialized before calling inbox().'
           )
         }
-        return createInboxAPI(Gist, topics)
+        return createInboxAPI(instance, Gist, topics)
       }
 
       _pluginLoaded = true
