@@ -94,7 +94,6 @@ function createInboxMessage(
         deliveryId: gistMessage.deliveryId,
         metric: JourneysEvents.Clicked,
         actionName: trackedResponse,
-        // actionValue: params.action, don't know
       })
     },
     markOpened: async () => {
