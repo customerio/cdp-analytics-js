@@ -90,6 +90,9 @@ function createInboxMessage(
     opened: gistMessage?.opened === true,
     properties: gistMessage.properties,
     trackClick: (trackedResponse?: string) => {
+      if(typeof gistMessage.deliveryId === 'undefined' || gistMessage.deliveryId === '') {
+        return
+      }
       void analyticsInstance.track(JourneysEvents.Metric, {
         deliveryId: gistMessage.deliveryId,
         metric: JourneysEvents.Clicked,
