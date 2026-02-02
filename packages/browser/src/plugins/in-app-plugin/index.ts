@@ -86,8 +86,11 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         })
         return
       }
-      const broadcastId: Number =
+      let broadcastId: Number =
         message?.properties?.gist?.broadcast?.broadcastIdInt
+      if (!broadcastId) {
+        broadcastId = message?.properties?.gist?.broadcast?.broadcastId
+      }
       if (broadcastId) {
         const templateId = message?.properties?.gist?.broadcast?.templateId
         void _analytics.track(JourneysEvents.Content, {
@@ -136,8 +139,11 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         })
         return
       }
-      const broadcastId: Number =
+      let broadcastId: Number =
         params?.message?.properties?.gist?.broadcast?.broadcastIdInt
+      if (!broadcastId) {
+        broadcastId = params?.message?.properties?.gist?.broadcast?.broadcastId
+      }
       if (broadcastId) {
         const templateId: Number =
           params?.message?.properties?.gist?.broadcast?.templateId
