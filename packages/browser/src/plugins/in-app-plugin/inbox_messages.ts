@@ -6,6 +6,7 @@ export interface GistInboxMessage {
   expiry: string
   priority: number
   topics?: string[]
+  type: string
   properties: { [key: string]: any }
   queueId: string
   userToken: string
@@ -26,6 +27,12 @@ export interface InboxMessage {
 
   // When the message was sent
   readonly sentAt: string
+
+  // Optional message type
+  readonly type: string
+
+  // Optional list of topics this message belongs to
+  readonly topics: string[]
 
   /**
    * Tracks a click metric for the message with an optional tracked response value.
@@ -89,6 +96,8 @@ function createInboxMessage(
     messageId: gistMessage.queueId,
     opened: gistMessage?.opened === true,
     properties: gistMessage.properties,
+    type: gistMessage.type || "",
+    topics: gistMessage.topics || [],
     trackClick: (trackedResponse?: string) => {
       if(typeof gistMessage.deliveryId === 'undefined' || gistMessage.deliveryId === '') {
         return
