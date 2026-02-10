@@ -138,7 +138,7 @@ async function getFilteredMessages(
     return []
   }
 
-  allMessages = allMessages.sort((a, b) => {
+  allMessages = allMessages.slice().sort((a, b) => {
     return new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()
   })
 
