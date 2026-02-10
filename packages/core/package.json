@@ -1,6 +1,6 @@
 {
   "name": "@customerio/cdp-analytics-core",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "repository": {
     "type": "git",
     "url": "https://github.com/customerio/cdp-analytics-js",
