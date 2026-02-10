@@ -26,7 +26,10 @@ export interface InboxMessage {
   readonly properties: { [key: string]: any }
 
   // When the message was sent
-  readonly sentAt: string
+  readonly sentAt: Date
+
+  // When the message expires
+  readonly expiresAt?: Date
 
   // Optional message type
   readonly type: string
@@ -92,11 +95,12 @@ function createInboxMessage(
   gistMessage: GistInboxMessage
 ): InboxMessage {
   return {
-    sentAt: gistMessage.sentAt,
+    sentAt: new Date(gistMessage.sentAt),
+    expiresAt: gistMessage.expiry ? new Date(gistMessage.expiry) : undefined,
     messageId: gistMessage.queueId,
     opened: gistMessage?.opened === true,
     properties: gistMessage.properties,
-    type: gistMessage.type || "",
+    type: gistMessage.type || '',
     topics: gistMessage.topics || [],
     trackClick: (trackedResponse?: string) => {
       if(typeof gistMessage.deliveryId === 'undefined' || gistMessage.deliveryId === '') {
@@ -133,6 +137,10 @@ async function getFilteredMessages(
   if (!allMessages || !Array.isArray(allMessages)) {
     return []
   }
+
+  allMessages = allMessages.slice().sort((a, b) => {
+    return new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()
+  })
 
   if (topics.length === 0) {
     return allMessages
