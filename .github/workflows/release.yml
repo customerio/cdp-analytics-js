@@ -92,6 +92,7 @@ jobs:
     environment: release
     permissions:
       id-token: write
+      packages: write
       contents: read
 
     steps:
