@@ -70,6 +70,14 @@ export class Analytics extends NodeEmitter implements CoreAnalytics {
   }
 
   /**
+   * Instantly flush any queued events, if there are any.
+   * @returns a promise resolving after the batch request has been successfully sent.
+   */
+  public flush(): Promise<void> {
+    return this._publisher.flush()
+  }
+
+  /**
    * Call this method to stop collecting new events and flush all existing events.
    * This method also waits for any event method-specific callbacks to be triggered,
    * and any of their subsequent promises to be resolved/rejected.
