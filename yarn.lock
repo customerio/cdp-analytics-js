@@ -755,7 +755,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@customerio/cdp-analytics-browser@workspace:packages/browser"
   dependencies:
-    "@customerio/cdp-analytics-core": 0.3.19
+    "@customerio/cdp-analytics-core": 0.4.1
     "@internal/config": 0.0.0
     "@lukeed/uuid": ^2.0.0
     "@segment/analytics.js-integration": ^3.3.3
@@ -777,7 +777,7 @@ __metadata:
     aws-sdk: ^2.814.0
     circular-dependency-plugin: ^5.2.2
     compression-webpack-plugin: ^8.0.1
-    customerio-gist-web: 3.20.4
+    customerio-gist-web: 3.21.1
     dset: ^3.1.2
     execa: ^4.1.0
     flat: ^5.0.2
@@ -822,7 +822,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@customerio/cdp-analytics-node@workspace:packages/node"
   dependencies:
-    "@customerio/cdp-analytics-core": 0.3.19
+    "@customerio/cdp-analytics-core": 0.4.1
     "@internal/config": 0.0.0
     "@lukeed/uuid": ^2.0.0
     "@types/node": ^14
@@ -5632,12 +5632,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"customerio-gist-web@npm:3.20.4":
-  version: 3.20.4
-  resolution: "customerio-gist-web@npm:3.20.4"
+"customerio-gist-web@npm:3.21.1":
+  version: 3.21.1
+  resolution: "customerio-gist-web@npm:3.21.1"
   dependencies:
     uuid: ^8.3.2
-  checksum: 1ba5a0a6f2531ccff3a9122dbc0b13e60dd2a5708a939c2d08f17c1472bc9cd7a6afbb9cb94a74e8634dce20f53cfef53432cec38956d7a25c956219ea7455d4
+  checksum: 6a09f00fd07affa97fcf42ec9d6474dfdbf54e76cd888f6339e7070fa499b167e0551a00036a36bdf2ab0b06cec0383caf75b192ed05e40e34eb611fd43838d6
   languageName: node
   linkType: hard
 
