@@ -8,6 +8,7 @@ import { Integrations, JSONObject } from '../events/interfaces'
 import { CorePlugin } from '../plugins'
 import { createTaskGroup, TaskGroup } from '../task/task-group'
 import { attempt, ensure } from './delivery'
+import { pTimeout } from '../callback'
 import { isOffline } from '../connection'
 
 export type EventQueueEmitterContract<Ctx extends CoreContext> = {
@@ -50,7 +51,7 @@ export abstract class CoreEventQueue<
     plugin: Plugin,
     instance: CoreAnalytics
   ): Promise<void> {
-    await Promise.resolve(plugin.load(ctx, instance))
+    await pTimeout(Promise.resolve(plugin.load(ctx, instance)), 10000)
       .then(() => {
         this.plugins.push(plugin)
       })
