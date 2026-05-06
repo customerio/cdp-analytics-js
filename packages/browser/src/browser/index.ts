@@ -210,14 +210,12 @@ async function registerPlugins(
   ).catch(() => [])
 
   const inAppPluginName = 'Customer.io In-App Plugin'
-  let inAppPluginSettings = mergedSettings[
-    inAppPluginName
-  ] as InAppPluginSettings
-  if (!inAppPluginSettings) {
-    inAppPluginSettings = options.integrations?.[
-      inAppPluginName
-    ] as InAppPluginSettings
-  }
+  const inAppPluginOverride = options.integrations?.[inAppPluginName]
+  const inAppPluginSettings: InAppPluginSettings | undefined =
+    inAppPluginOverride === false
+      ? undefined
+      : (mergedSettings[inAppPluginName] as InAppPluginSettings | undefined) ??
+        (inAppPluginOverride as InAppPluginSettings | undefined)
 
   const inAppPlugin = inAppPluginSettings
     ? await import(
