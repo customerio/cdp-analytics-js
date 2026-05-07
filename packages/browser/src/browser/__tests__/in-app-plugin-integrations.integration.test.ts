@@ -45,10 +45,10 @@ describe('In-App Plugin integrations option', () => {
     )
   })
 
-  it('does not register the In-App Plugin when integrations sets it to false', async () => {
+  it('does not register the In-App Plugin when integrations sets enabled: false', async () => {
     const [analytics] = await AnalyticsBrowser.load(
       { writeKey: 'foo' },
-      { integrations: { [inAppPluginName]: false } }
+      { integrations: { [inAppPluginName]: { enabled: false } } }
     )
 
     const inApp = analytics.queue.plugins.find(
@@ -56,6 +56,19 @@ describe('In-App Plugin integrations option', () => {
     )
     expect(inApp).toBeUndefined()
     expect(Gist.setup).not.toHaveBeenCalled()
+  })
+
+  it('registers the In-App Plugin when integrations sets enabled: true', async () => {
+    const [analytics] = await AnalyticsBrowser.load(
+      { writeKey: 'foo' },
+      { integrations: { [inAppPluginName]: { enabled: true } } }
+    )
+
+    const inApp = analytics.queue.plugins.find(
+      (p) => p.name === inAppPluginName
+    )
+    expect(inApp).toBeDefined()
+    expect(Gist.setup).toHaveBeenCalled()
   })
 
   it('overrides CDN settings when integrations supplies an object', async () => {
