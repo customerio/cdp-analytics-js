@@ -33,6 +33,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
   let _pluginLoaded = false
   const _eventTarget: EventTarget = new EventTarget()
 
+  // Run at plugin creation time (before load()) so the debug overlay appears
+  // even when the CDP endpoint is unreachable and load() never fires.
+  if (typeof window !== 'undefined') {
+    Gist.setupDebugOverlay?.()
+  }
+
   async function setAnonymousId() {
     const anonymousId = _analytics.user().anonymousId()
     if (anonymousId) {

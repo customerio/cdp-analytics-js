@@ -294,6 +294,19 @@ async function loadAnalytics(
   // this is an ugly side-effect, but it's for the benefits of the plugins that get their cdn via getCDN()
   if (settings.cdnURL) setGlobalCDNUrl(settings.cdnURL)
 
+  // Eagerly load the in-app plugin chunk when a debug session is requested so
+  // the gist-web debug overlay initialises even if the CDP settings endpoint
+  // is unreachable (the chunk is otherwise only loaded after settings succeed).
+  if (
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('cio_debug_session') ===
+      'true'
+  ) {
+    import(
+      /* webpackChunkName: "inAppPlugin" */ '../plugins/in-app-plugin'
+    ).catch(() => {})
+  }
+
   const legacySettings =
     settings.cdnSettings ??
     (await loadLegacySettings(settings.writeKey, settings.cdnURL))
