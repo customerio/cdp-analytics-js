@@ -64,7 +64,7 @@ export function queryString(
 }
 
 export function hasQueryString(key: string, value?: string): boolean {
-  if (window == null) {
+  if (typeof window == 'undefined' || window?.location?.search == null) {
     return false;
   }
 
