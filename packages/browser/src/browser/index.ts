@@ -28,6 +28,7 @@ import { attachInspector } from '../core/inspector'
 import { Stats } from '../core/stats'
 import { InAppPluginSettings } from '../plugins/in-app-plugin'
 import { setGlobalAnalyticsKey } from '../lib/global-analytics-helper'
+import { hasQueryString } from '../core/query-string'
 
 export interface LegacyIntegrationConfiguration {
   /* @deprecated - This does not indicate browser types anymore */
@@ -297,11 +298,7 @@ async function loadAnalytics(
   // Eagerly load the in-app plugin chunk when a debug session is requested so
   // the gist-web debug overlay initialises even if the CDP settings endpoint
   // is unreachable (the chunk is otherwise only loaded after settings succeed).
-  if (
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('cio_debug_session') ===
-      'true'
-  ) {
+  if (hasQueryString('cio_debug_session', 'true')) {
     import(
       /* webpackChunkName: "inAppPlugin" */ '../plugins/in-app-plugin'
     ).catch(() => {})

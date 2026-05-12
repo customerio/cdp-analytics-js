@@ -1,6 +1,7 @@
 import { Analytics } from '../../core/analytics'
 import { Context } from '../../core/context'
 import { Plugin } from '../../core/plugin'
+import { hasQueryString } from '../../core/query-string'
 
 import {
   InAppEvents,
@@ -27,11 +28,7 @@ export type InAppPluginSettings = {
   anonymousInApp: boolean | false
 }
 
-if (
-  typeof window !== 'undefined' &&
-  new URLSearchParams(window.location.search).get('cio_debug_session') ===
-    'true'
-) {
+if (hasQueryString('cio_debug_session', 'true')) {
   Gist.setupDebugOverlay?.()
 }
 
