@@ -638,6 +638,82 @@ describe('deregister', () => {
   })
 })
 
+describe('register plugin timeout', () => {
+  beforeEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('times out a destination plugin whose load() never resolves and adds it to failedInitializations', async () => {
+    const eq = new TestEventQueue()
+    const hangingPlugin: CorePlugin = {
+      name: 'Hanging Destination',
+      type: 'destination',
+      version: '0.1.0',
+      load: () => new Promise<void>(() => {}), // never resolves
+      isLoaded: () => false,
+    }
+
+    // Use pTimeout to ensure the test itself does not hang
+    await pTimeout(eq.register(TestCtx.system(), hangingPlugin, ajs), 15000)
+
+    // The plugin should NOT be in the plugins list
+    expect(eq.plugins.find((p) => p.name === 'Hanging Destination')).toBeUndefined()
+
+    // It should be recorded as a failed initialization
+    expect(eq.failedInitializations).toContain('Hanging Destination')
+  }, 20000)
+
+  it('throws for non-destination plugins whose load() never resolves', async () => {
+    const eq = new TestEventQueue()
+    const hangingPlugin: CorePlugin = {
+      name: 'Hanging Before Plugin',
+      type: 'before',
+      version: '0.1.0',
+      load: () => new Promise<void>(() => {}), // never resolves
+      isLoaded: () => false,
+    }
+
+    await expect(
+      pTimeout(eq.register(TestCtx.system(), hangingPlugin, ajs), 15000)
+    ).rejects.toThrow('Promise timed out')
+
+    // The plugin should NOT be in the plugins list
+    expect(eq.plugins.find((p) => p.name === 'Hanging Before Plugin')).toBeUndefined()
+  }, 20000)
+
+  it('continues initialization with other plugins after a destination plugin times out', async () => {
+    const eq = new TestEventQueue()
+    const hangingPlugin: CorePlugin = {
+      name: 'Hanging Destination',
+      type: 'destination',
+      version: '0.1.0',
+      load: () => new Promise<void>(() => {}), // never resolves
+      isLoaded: () => false,
+    }
+
+    const goodPlugin: CorePlugin = {
+      name: 'Good Plugin',
+      type: 'destination',
+      version: '0.1.0',
+      load: () => Promise.resolve(),
+      isLoaded: () => true,
+    }
+
+    // Register the good plugin first (resolves immediately)
+    await eq.register(TestCtx.system(), goodPlugin, ajs)
+
+    // Now register the hanging plugin — it will time out after 10s
+    await pTimeout(eq.register(TestCtx.system(), hangingPlugin, ajs), 15000)
+
+    // Good plugin should be registered
+    expect(eq.plugins.find((p) => p.name === 'Good Plugin')).toBeDefined()
+
+    // Hanging plugin should have failed
+    expect(eq.failedInitializations).toContain('Hanging Destination')
+    expect(eq.plugins.find((p) => p.name === 'Hanging Destination')).toBeUndefined()
+  }, 20000)
+})
+
 describe('dispatchSingle', () => {
   it('dispatches events without placing them on the queue', async () => {
     const eq = new TestEventQueue()

@@ -26,6 +26,7 @@ export type InAppPluginSettings = {
   _logging: GistConfig['logging'] | undefined
 
   anonymousInApp: boolean | false
+  enabled?: boolean
 }
 
 if (hasQueryString('cio_debug_session', 'true')) {
