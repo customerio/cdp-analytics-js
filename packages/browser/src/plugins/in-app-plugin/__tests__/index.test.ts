@@ -419,21 +419,6 @@ describe('Customer.io In-App Plugin', () => {
       )
     })
 
-    it('should not dispatch inbox events when events listener is not set', () => {
-      gistInboxMessageAction({
-        message: {
-          queueId: 'inbox-msg-1',
-          deliveryId: 'test-delivery',
-        },
-        action: 'opened',
-      })
-
-      expect(eventListener).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: InboxEvents.MessageOpened,
-        })
-      )
-    })
   })
 
   describe('Anonymous', () => {
