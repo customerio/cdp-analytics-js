@@ -3,6 +3,36 @@ import { JourneysEvents } from './events'
 
 const CIO_TOPIC_PREFIX = '_cio'
 
+// Inbox topics are stored as `cio_inbox_<inbox_id>`, so the inbox id is derived
+// from the message's topic rather than carried as a separate field.
+const INBOX_TOPIC_PREFIX = 'cio_inbox_'
+
+export function deriveInboxId(topics?: string[]): string | undefined {
+  const topic = topics?.find((t) => t.startsWith(INBOX_TOPIC_PREFIX))
+  return topic ? topic.slice(INBOX_TOPIC_PREFIX.length) : undefined
+}
+
+// Single definition of an inbox delivery-metric payload, shared by the gist
+// event handlers and the headless inbox API's trackClick. Inbox-specific (adds
+// message_id/inbox_id) — distinct from the in-app delivery metrics in index.ts.
+export function trackInboxMetric(
+  analyticsInstance: Analytics,
+  message: GistInboxMessage,
+  metric: JourneysEvents,
+  extra?: Record<string, unknown>
+): void {
+  if (!message?.deliveryId) {
+    return
+  }
+  void analyticsInstance.track(JourneysEvents.Metric, {
+    deliveryId: message.deliveryId,
+    metric,
+    message_id: message.messageId ?? message.queueId,
+    inbox_id: deriveInboxId(message.topics),
+    ...extra,
+  })
+}
+
 export interface GistInboxMessage {
   messageType: string
   expiry: string
@@ -10,6 +40,7 @@ export interface GistInboxMessage {
   topics?: string[]
   type: string
   properties: { [key: string]: any }
+  messageId?: string
   queueId: string
   userToken: string
   deliveryId: string
@@ -121,12 +152,7 @@ function createInboxMessage(
     type: gistMessage.type || '',
     topics: gistMessage.topics || [],
     trackClick: (trackedResponse?: string) => {
-      if(typeof gistMessage.deliveryId === 'undefined' || gistMessage.deliveryId === '') {
-        return
-      }
-      void analyticsInstance.track(JourneysEvents.Metric, {
-        deliveryId: gistMessage.deliveryId,
-        metric: JourneysEvents.Clicked,
+      trackInboxMetric(analyticsInstance, gistMessage, JourneysEvents.Clicked, {
         actionName: trackedResponse,
       })
     },

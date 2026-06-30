@@ -9,6 +9,7 @@ describe('Customer.io In-App Plugin', () => {
   let gistMessageShown: Function
   let gistMessageAction: Function
   let gistInboxMessageAction: Function
+  let gistInboxMessageReceived: Function
   let gistEventDispatched: Function
 
   beforeEach(async () => {
@@ -33,6 +34,8 @@ describe('Customer.io In-App Plugin', () => {
           gistMessageAction = cb
         } else if (name === 'inboxMessageAction') {
           gistInboxMessageAction = cb
+        } else if (name === 'inboxMessageReceived') {
+          gistInboxMessageReceived = cb
         } else if (name === 'eventDispatched') {
           gistEventDispatched = cb
         }
@@ -318,6 +321,42 @@ describe('Customer.io In-App Plugin', () => {
         },
       })
       expect(spy).toHaveBeenCalledTimes(0)
+    })
+
+    it('should trigger journey sent event when an inbox message is received', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistInboxMessageReceived({
+        message: {
+          deliveryId: 'test-delivery',
+          queueId: 'queue-1',
+          topics: ['cio_inbox_default'],
+        },
+      })
+      expect(spy).toBeCalledWith('Report Delivery Event', {
+        deliveryId: 'test-delivery',
+        metric: 'sent',
+        message_id: 'queue-1',
+        inbox_id: 'default',
+      })
+    })
+
+    it('should include message_id and inbox_id derived from the topic', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistInboxMessageAction({
+        message: {
+          deliveryId: 'test-delivery',
+          messageId: 'msg-1',
+          queueId: 'queue-1',
+          topics: ['cio_inbox_news'],
+        },
+        action: 'opened',
+      })
+      expect(spy).toBeCalledWith('Report Delivery Event', {
+        deliveryId: 'test-delivery',
+        metric: 'opened',
+        message_id: 'msg-1',
+        inbox_id: 'news',
+      })
     })
   })
 

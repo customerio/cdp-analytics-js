@@ -14,7 +14,7 @@ import {
 } from './events'
 import Gist, { type GistConfig, type ColorScheme } from 'customerio-gist-web'
 import type { InboxAPI, InboxMessage, GistInboxMessage, InboxActionConfig, InboxMessageActionParams } from './inbox_messages'
-import { createInboxAPI } from './inbox_messages'
+import { createInboxAPI, trackInboxMetric } from './inbox_messages'
 
 export { InAppEvents, InboxEvents }
 export type { InboxAPI, InboxMessage, ColorScheme }
@@ -157,6 +157,13 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
           params.action,
           params.actionConfig
         )
+      }
+    })
+
+    Gist.events.on('inboxMessageReceived', (event: unknown) => {
+      const params = event as { message?: GistInboxMessage }
+      if (params?.message) {
+        trackInboxMetric(_analytics, params.message, JourneysEvents.Sent)
       }
     })
 
@@ -318,16 +325,8 @@ function _handleInboxMessageAction(
   action: InboxMessageActionParams['action'],
   actionConfig?: InboxActionConfig
 ) {
-  const deliveryId = message?.deliveryId
-  if (typeof deliveryId === 'undefined' || deliveryId === '') {
-    return
-  }
-
   if (action === 'opened') {
-    void analyticsInstance.track(JourneysEvents.Metric, {
-      deliveryId: deliveryId,
-      metric: JourneysEvents.Opened,
-    })
+    trackInboxMetric(analyticsInstance, message, JourneysEvents.Opened)
     return
   }
 
@@ -335,9 +334,7 @@ function _handleInboxMessageAction(
     if (actionConfig?.behavior === 'dismiss' && !actionConfig?.name) {
       return
     }
-    void analyticsInstance.track(JourneysEvents.Metric, {
-      deliveryId: deliveryId,
-      metric: JourneysEvents.Clicked,
+    trackInboxMetric(analyticsInstance, message, JourneysEvents.Clicked, {
       actionName: actionConfig?.name,
       actionValue: actionConfig?.action,
     })

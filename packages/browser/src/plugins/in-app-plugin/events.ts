@@ -18,6 +18,7 @@ export enum JourneysEvents {
     Content = 'Report Content Event',
     Opened = 'opened',
     Clicked = 'clicked',
+    Sent = 'sent',
     ViewedContent = 'viewed_content',
     ClickedContent = 'clicked_content'
 }
