@@ -41,31 +41,36 @@ issueRules:
 # and absent from the shipped bundles.
 #
 #   @SocketSecurity ignore segmentio-facade@3.2.7          # via @segment/analytics.js-integration-amplitude (dev)
-#   @SocketSecurity ignore @segment/facade@3.4.9           # dev
+#   @SocketSecurity ignore @segment/facade@3.4.10          # dev
 #   @SocketSecurity ignore @segment/analytics.js-integration-amplitude@3.3.3
 #   @SocketSecurity ignore trim@1.0.0                      # via amplitude integration
 #   @SocketSecurity ignore csp_evaluator@1.1.0             # via lighthouse (dev)
 #   @SocketSecurity ignore date-fns@2.29.3                 # via concurrently (dev)
 #   @SocketSecurity ignore breakword@1.0.5                 # via csv tooling (dev)
+#   @SocketSecurity ignore diff-sequences@27.5.1           # via jest (dev)
 #   @SocketSecurity ignore diff-sequences@28.1.1           # via jest (dev)
 #   @SocketSecurity ignore kind-of@6.0.3                   # via build tooling (dev)
 #   @SocketSecurity ignore object.assign@4.1.2             # via build tooling (dev)
 #   @SocketSecurity ignore uri-js@4.4.1                    # via ajv (dev)
 #   @SocketSecurity ignore intl-messageformat-parser@1.8.1 # dev
-#   @SocketSecurity ignore xmlbuilder@9.0.7                # via xml2js / build tooling (dev)
-#   @SocketSecurity ignore caniuse-lite@1.0.30001352       # via browserslist (dev)
-#   @SocketSecurity ignore sax@1.2.1                       # via xml2js (dev)
-#   @SocketSecurity ignore querystring@0.2.0               # via legacy tooling (dev)
+#   @SocketSecurity ignore caniuse-lite@1.0.30001805       # via browserslist (dev)
 #   @SocketSecurity ignore @npmcli/move-file@2.0.0         # via node-gyp / cacache (dev)
-#   @SocketSecurity ignore npmlog@4.1.2                    # via node-gyp (dev)
-#   @SocketSecurity ignore gauge@2.7.4                     # via node-gyp (dev)
-#   @SocketSecurity ignore are-we-there-yet@1.1.7          # via node-gyp (dev)
-#   @SocketSecurity ignore buffer@4.9.2                    # via build tooling (dev)
+#   @SocketSecurity ignore npmlog@6.0.2                    # via node-gyp (dev)
+#   @SocketSecurity ignore gauge@4.0.4                     # via node-gyp (dev)
+#   @SocketSecurity ignore are-we-there-yet@3.0.0          # via node-gyp (dev)
+#   @SocketSecurity ignore buffer@5.7.1                    # via build tooling (dev)
+#   @SocketSecurity ignore buffer@6.0.3                    # via build tooling (dev)
 #   @SocketSecurity ignore jsdom@19.0.0                    # via jest (dev)
+#   @SocketSecurity ignore cssom@0.3.8                     # via jsdom (dev)
 #   @SocketSecurity ignore cssom@0.5.0                     # via jsdom (dev)
-#   @SocketSecurity ignore whatwg-encoding@3.1.1           # via jsdom (dev)
-#   @SocketSecurity ignore @humanwhocodes/object-schema@2.0.3 # via eslint (dev)
+#   @SocketSecurity ignore whatwg-encoding@2.0.0           # via jsdom (dev)
+#   @SocketSecurity ignore @humanwhocodes/object-schema@1.2.1 # via eslint (dev)
 #   @SocketSecurity ignore esquery@1.4.0                   # via eslint (dev)
 #   @SocketSecurity ignore webpack-cli@4.8.0               # dev build tooling
-#   @SocketSecurity ignore @playwright/test@1.28.1         # dev test tooling
-#   @SocketSecurity ignore typescript@7.0.2                # dev tooling
+#   @SocketSecurity ignore @playwright/test@1.61.1         # dev test tooling
+#   @SocketSecurity ignore typescript@4.9.5                # dev tooling
+#
+# NOTE: xmlbuilder / sax / querystring were dropped from this list — they left
+# the tree when the unused aws-sdk v2 devDep was removed. Versions above are
+# reconciled against the current yarn.lock; if Socket flags a different version,
+# match the exact pkg@version it reports.
