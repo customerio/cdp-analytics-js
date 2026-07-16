@@ -43,7 +43,7 @@ jobs:
           scope: '@customerio'
 
       - name: Install npm 11.5.1+ for OIDC support
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Install
         run: |
@@ -109,7 +109,7 @@ jobs:
           scope: '@customerio'
 
       - name: Install npm 11.5.1+ for OIDC support
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Install
         run: |

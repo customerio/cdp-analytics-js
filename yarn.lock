@@ -760,7 +760,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@customerio/cdp-analytics-browser@workspace:packages/browser"
   dependencies:
-    "@customerio/cdp-analytics-core": 0.5.6
+    "@customerio/cdp-analytics-core": 0.5.7
     "@internal/config": 0.0.0
     "@lukeed/uuid": ^2.0.0
     "@segment/analytics.js-integration": ^3.3.3
@@ -781,7 +781,7 @@ __metadata:
     "@types/spark-md5": ^3.0.2
     circular-dependency-plugin: ^5.2.2
     compression-webpack-plugin: ^8.0.1
-    customerio-gist-web: 3.23.3
+    customerio-gist-web: 3.23.6
     dset: ^3.1.4
     execa: ^4.1.0
     flat: ^5.0.2
@@ -826,7 +826,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@customerio/cdp-analytics-node@workspace:packages/node"
   dependencies:
-    "@customerio/cdp-analytics-core": 0.5.6
+    "@customerio/cdp-analytics-core": 0.5.7
     "@internal/config": 0.0.0
     "@lukeed/uuid": ^2.0.0
     "@types/node": ^14
@@ -838,10 +838,10 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@customerio/jist@npm:^0.1.6":
-  version: 0.1.6
-  resolution: "@customerio/jist@npm:0.1.6"
-  checksum: 986a2603c1a5784552a99d18d6be23966a65176a0006bf8ab6f759f03d338bd20bbcbf262c4e54b5e15cb101ddcab531239f432a1802b5b5c215ba3af9ec45e9
+"@customerio/jist@npm:^0.3.0":
+  version: 0.3.0
+  resolution: "@customerio/jist@npm:0.3.0"
+  checksum: a5c05fa547431e897da9f53cbaf80b62b2eb7311fe1775bac4e292b7b77dcccb152d00fd804237a5ee4af931537d8a0ebfcabdfb16dc296f90734f64d0f7e3e5
   languageName: node
   linkType: hard
 
@@ -5457,13 +5457,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"customerio-gist-web@npm:3.23.3":
-  version: 3.23.3
-  resolution: "customerio-gist-web@npm:3.23.3"
+"customerio-gist-web@npm:3.23.6":
+  version: 3.23.6
+  resolution: "customerio-gist-web@npm:3.23.6"
   dependencies:
-    "@customerio/jist": ^0.1.6
+    "@customerio/jist": ^0.3.0
     uuid: ^14.0.0
-  checksum: 9decaa677c86351a9ee7b723229e890cce6363d23d614e90a7e6eab943dd593db8c37e423470f2b5da05f17101ee8e4f512f23001cfed27fdfd9aee38e5f0701
+  checksum: 475b99debd7f5f5de10072e9813765d8d2d9982fde9e03ac514e7246602a0bb8d9477f8fa8fc19a5331d2bdb9f1f5e2902938e11214d123b5c2c09ff9e2fa648
   languageName: node
   linkType: hard
 
