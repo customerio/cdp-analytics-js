@@ -781,7 +781,7 @@ __metadata:
     "@types/spark-md5": ^3.0.2
     circular-dependency-plugin: ^5.2.2
     compression-webpack-plugin: ^8.0.1
-    customerio-gist-web: 3.23.6
+    customerio-gist-web: 3.24.0
     dset: ^3.1.4
     execa: ^4.1.0
     flat: ^5.0.2
@@ -5457,13 +5457,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"customerio-gist-web@npm:3.23.6":
-  version: 3.23.6
-  resolution: "customerio-gist-web@npm:3.23.6"
+"customerio-gist-web@npm:3.24.0":
+  version: 3.24.0
+  resolution: "customerio-gist-web@npm:3.24.0"
   dependencies:
     "@customerio/jist": ^0.3.0
     uuid: ^14.0.0
-  checksum: 475b99debd7f5f5de10072e9813765d8d2d9982fde9e03ac514e7246602a0bb8d9477f8fa8fc19a5331d2bdb9f1f5e2902938e11214d123b5c2c09ff9e2fa648
+  checksum: 79a4cadf50ea2c8137f654dd6dd4b711a2ff218ba84dd692190a6dea0735f1ab6ef338923291490d33d7d807449055af35907b17c16265921e4362b79140499f
   languageName: node
   linkType: hard
 
