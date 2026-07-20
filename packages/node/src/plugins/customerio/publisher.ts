@@ -12,7 +12,7 @@ function sleep(timeoutInMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, timeoutInMs))
 }
 
-function noop() { }
+function noop() {}
 
 interface PendingItem {
   resolver: (ctx: Context) => void
@@ -87,6 +87,23 @@ export class Publisher {
   private clearBatch() {
     this.pendingFlushTimeout && clearTimeout(this.pendingFlushTimeout)
     this._batch = undefined
+  }
+
+  /**
+   * Instantly flush any queued events, if there are any.
+   * @returns a promise resolving after the batch request has been successfully sent.
+   */
+  async flush(): Promise<void> {
+    const batch = this._batch
+
+    if (!batch || batch.length === 0) {
+      return
+    }
+
+    const resultPromise = this.send(batch)
+    this.clearBatch()
+    // If the send request fails, the caller will throw when "awaiting" this returned promise
+    return resultPromise
   }
 
   flushAfterClose(pendingItemsCount: number) {
