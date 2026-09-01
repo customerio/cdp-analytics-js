@@ -82,6 +82,13 @@ export interface AnalyticsBrowserSettings extends AnalyticsSettings {
   cdnURL?: string
 }
 
+/**
+ * Load settings from the CDP settings endpoint.
+ *
+ * Returns minimal default settings on 404 (write key has no device-mode destinations)
+ * to allow the SDK to function for tracking-only use cases without spamming
+ * the console. Other errors are logged once and re-thrown.
+ */
 export function loadLegacySettings(
   writeKey: string,
   cdnURL?: string
@@ -91,6 +98,18 @@ export function loadLegacySettings(
   return fetch(`${baseUrl}/v1/projects/${writeKey}/settings`)
     .then((res) => {
       if (!res.ok) {
+        // 404 means no device-mode destinations configured for this write key.
+        // This is a valid state, not an error. Return minimal settings.
+        if (res.status === 404) {
+          console.warn(
+            '[analytics.js] No device-mode destinations configured for this source. ' +
+              'Events will be sent server-side only.'
+          )
+          return {
+            integrations: {},
+            remotePlugins: [],
+          } as LegacySettings
+        }
         return res.text().then((errorResponseMessage) => {
           throw new Error(errorResponseMessage)
         })

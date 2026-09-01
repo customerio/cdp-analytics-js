@@ -22,3 +22,14 @@ export function embeddedWriteKey(): string | undefined {
     ? window.analyticsWriteKey
     : undefined
 }
+
+/**
+ * Check for a data-write-key attribute on the current script element.
+ * This allows embedding the write key directly in the script tag:
+ * <script src="analytics.min.js" data-write-key="your-write-key"></script>
+ */
+export function dataAttributeWriteKey(): string | undefined {
+  const script = document.currentScript as HTMLScriptElement | null
+  if (!script) return undefined
+  return script.dataset.writeKey || undefined
+}

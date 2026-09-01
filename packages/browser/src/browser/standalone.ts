@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { getCDN, setGlobalCDNUrl } from '../lib/parse-cdn'
 import { setVersionType } from '../plugins/customerio/normalize'
+import { isLazyLoadEnabled, getCdnUrlAttribute } from '../lib/lazy-load'
+
+// Capture lazy-load state early, before document.currentScript becomes null
+const lazyLoadEnabled = isLazyLoadEnabled()
+const cdnUrlOverride = getCdnUrlAttribute()
 
 // The global analytics key must be set first so that subsequent calls to getCdn() fetch the CDN from the correct instance.
 const globalAnalyticsKey = (
@@ -11,6 +16,11 @@ const globalAnalyticsKey = (
 
 if (globalAnalyticsKey) {
   setGlobalAnalyticsKey(globalAnalyticsKey)
+}
+
+// Apply CDN URL override from data attribute if provided
+if (cdnUrlOverride) {
+  setGlobalCDNUrl(cdnUrlOverride)
 }
 
 if (process.env.ASSET_PATH) {
@@ -30,7 +40,7 @@ if (process.env.ASSET_PATH) {
 
 setVersionType('web')
 
-import { install } from './standalone-analytics'
+import { install, setupLazyLoad } from './standalone-analytics'
 import '../lib/csp-detection'
 import { shouldPolyfill } from '../lib/browser-polyfill'
 import { RemoteMetrics } from '../core/stats/remote-metrics'
@@ -66,6 +76,22 @@ async function attempt<T>(promise: () => Promise<T>) {
   }
 }
 
+/**
+ * Initialize analytics based on mode.
+ * - Normal mode: auto-install immediately
+ * - Lazy-load mode: set up the global analytics object but defer installation
+ *   until window.analytics.load() is explicitly called
+ */
+function initializeAnalytics(): void {
+  if (lazyLoadEnabled) {
+    // Lazy-load mode: set up buffering but don't fetch settings yet
+    setupLazyLoad()
+  } else {
+    // Normal mode: install immediately
+    attempt(install)
+  }
+}
+
 if (shouldPolyfill()) {
   // load polyfills in order to get AJS to work with old browsers
   const script = document.createElement('script')
@@ -83,8 +109,8 @@ if (shouldPolyfill()) {
   }
 
   script.onload = function (): void {
-    attempt(install)
+    initializeAnalytics()
   }
 } else {
-  attempt(install)
+  initializeAnalytics()
 }
