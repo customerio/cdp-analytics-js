@@ -73,6 +73,49 @@ function pageDeclaresEmbeds(): boolean {
   return document.querySelector(EMBED_PAYLOAD_SELECTOR) !== null
 }
 
+/**
+ * Reporting identity for content that belongs to no campaign — an anonymous
+ * broadcast, or an embed the page supplied. Both report as the same content
+ * event through the same call: the pipeline requires an integer contentId and
+ * templateId (services core/batch/batch.go), so an embed payload has to carry
+ * them exactly as a broadcast does.
+ */
+function contentIds(message: any): {
+  contentId?: number
+  templateId?: number
+} {
+  const gist = message?.properties?.gist
+  const broadcast = gist?.broadcast
+  if (broadcast) {
+    return {
+      contentId: broadcast.broadcastIdInt || broadcast.broadcastId,
+      templateId: broadcast.templateId,
+    }
+  }
+  return { contentId: gist?.contentId, templateId: gist?.templateId }
+}
+
+// A content event with a missing id is accepted at the edge and dropped by the
+// consumer, which is silent from here — so say so rather than let the metric
+// simply never appear.
+function warnMissingContentIds(
+  message: any,
+  contentId?: number,
+  templateId?: number
+): void {
+  if (contentId && templateId) return
+  const embedId = message?.embedId
+  if (embedId) {
+    _error(
+      `Embedded message ${embedId} carries no contentId/templateId, so its events cannot be reported.`
+    )
+  } else if (contentId && !templateId) {
+    _error(
+      `Content event for contentId ${contentId} has no templateId; the pipeline requires both and will drop it.`
+    )
+  }
+}
+
 if (hasQueryString('cio_debug_session', 'true')) {
   Gist.setupDebugOverlay?.()
 }
@@ -132,17 +175,6 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
           })
         )
       }
-      // An embed is placed by the page rather than delivered by a campaign or
-      // broadcast, so it reports as content keyed by its embed id and never as
-      // a delivery.
-      if (embedId) {
-        void _analytics.track(JourneysEvents.Content, {
-          actionType: JourneysEvents.ViewedContent,
-          contentId: embedId,
-          contentType: ContentType,
-        })
-        return
-      }
       if (typeof deliveryId !== 'undefined' && deliveryId !== '') {
         void _analytics.track(JourneysEvents.Metric, {
           deliveryId: deliveryId,
@@ -150,16 +182,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         })
         return
       }
-      let broadcastId: Number =
-        message?.properties?.gist?.broadcast?.broadcastIdInt
-      if (!broadcastId) {
-        broadcastId = message?.properties?.gist?.broadcast?.broadcastId
-      }
-      if (broadcastId) {
-        const templateId = message?.properties?.gist?.broadcast?.templateId
+      const { contentId, templateId } = contentIds(message)
+      warnMissingContentIds(message, contentId, templateId)
+      if (contentId) {
         void _analytics.track(JourneysEvents.Content, {
           actionType: JourneysEvents.ViewedContent,
-          contentId: broadcastId,
+          contentId: contentId,
           templateId: templateId,
           contentType: ContentType,
         })
@@ -232,16 +260,6 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
       if (params.action === 'gist://close') {
         return
       }
-      if (embedId) {
-        void _analytics.track(JourneysEvents.Content, {
-          actionType: JourneysEvents.ClickedContent,
-          contentId: embedId,
-          contentType: ContentType,
-          actionName: params.name,
-          actionValue: params.action,
-        })
-        return
-      }
       if (typeof deliveryId !== 'undefined' && deliveryId !== '') {
         void _analytics.track(JourneysEvents.Metric, {
           deliveryId: deliveryId,
@@ -251,17 +269,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         })
         return
       }
-      let broadcastId: Number =
-        params?.message?.properties?.gist?.broadcast?.broadcastIdInt
-      if (!broadcastId) {
-        broadcastId = params?.message?.properties?.gist?.broadcast?.broadcastId
-      }
-      if (broadcastId) {
-        const templateId: Number =
-          params?.message?.properties?.gist?.broadcast?.templateId
+      const { contentId, templateId } = contentIds(params?.message)
+      warnMissingContentIds(params?.message, contentId, templateId)
+      if (contentId) {
         void _analytics.track(JourneysEvents.Content, {
           actionType: JourneysEvents.ClickedContent,
-          contentId: broadcastId,
+          contentId: contentId,
           templateId: templateId,
           contentType: ContentType,
           actionName: params.name,

@@ -490,35 +490,35 @@ describe('Customer.io In-App Plugin', () => {
     })
   })
   describe('Embedded messages', () => {
-    it('reports a view as a content event keyed by the embed id', async () => {
+    const embedWithIds = {
+      messageId: 'gist-html-1',
+      embedId: 'emb_1',
+      properties: { gist: { encodedMessageHtml: 'H4sIAAAA', contentId: 42, templateId: 7 } },
+    }
+
+    it('reports a view through the same content event as a broadcast', async () => {
       const spy = jest.spyOn(analytics, 'track')
-      gistMessageShown({
-        messageId: 'gist-html-1',
-        embedId: 'emb_1',
-        properties: { gist: { encodedMessageHtml: 'H4sIAAAA' } },
-      })
+      gistMessageShown(embedWithIds)
       expect(spy).toBeCalledWith('Report Content Event', {
         actionType: 'viewed_content',
-        contentId: 'emb_1',
+        contentId: 42,
+        templateId: 7,
         contentType: 'in_app_content',
       })
       expect(spy).toBeCalledTimes(1)
     })
 
-    it('reports a click as a content event keyed by the embed id', async () => {
+    it('reports a click through the same content event as a broadcast', async () => {
       const spy = jest.spyOn(analytics, 'track')
       gistMessageAction({
-        message: {
-          messageId: 'gist-html-1',
-          embedId: 'emb_1',
-          properties: { gist: { encodedMessageHtml: 'H4sIAAAA' } },
-        },
+        message: embedWithIds,
         action: 'https://example.com',
         name: 'cta',
       })
       expect(spy).toBeCalledWith('Report Content Event', {
         actionType: 'clicked_content',
-        contentId: 'emb_1',
+        contentId: 42,
+        templateId: 7,
         contentType: 'in_app_content',
         actionName: 'cta',
         actionValue: 'https://example.com',
@@ -526,28 +526,45 @@ describe('Customer.io In-App Plugin', () => {
       expect(spy).toBeCalledTimes(1)
     })
 
+    it('says so rather than reporting nothing when a payload carries no ids', async () => {
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {})
+      const spy = jest.spyOn(analytics, 'track')
+
+      gistMessageShown({
+        messageId: 'gist-html-1',
+        embedId: 'emb_1',
+        properties: { gist: { encodedMessageHtml: 'H4sIAAAA' } },
+      })
+
+      expect(spy).not.toBeCalled()
+      expect(error).toBeCalledWith(
+        expect.stringContaining('carries no contentId/templateId')
+      )
+      error.mockRestore()
+    })
+
     it('reports nothing for a dismiss click', async () => {
       const spy = jest.spyOn(analytics, 'track')
       gistMessageAction({
-        message: { messageId: 'gist-html-1', embedId: 'emb_1' },
+        message: embedWithIds,
         action: 'gist://close',
         name: 'close',
       })
       expect(spy).toHaveBeenCalledTimes(0)
     })
 
-    it('prefers the embed over a campaign when a payload carries both', async () => {
+    it('reports a campaign delivery when the payload carries one', async () => {
       const spy = jest.spyOn(analytics, 'track')
       gistMessageShown({
         messageId: 'gist-html-1',
         embedId: 'emb_1',
-        properties: { gist: { campaignId: 'testcampaign' } },
+        properties: { gist: { campaignId: 'testcampaign', contentId: 42, templateId: 7 } },
       })
-      expect(spy).not.toBeCalledWith('Report Delivery Event', expect.anything())
-      expect(spy).toBeCalledWith(
-        'Report Content Event',
-        expect.objectContaining({ contentId: 'emb_1' })
-      )
+      expect(spy).toBeCalledWith('Report Delivery Event', {
+        deliveryId: 'testcampaign',
+        metric: 'opened',
+      })
+      expect(spy).toBeCalledTimes(1)
     })
   })
 
