@@ -489,4 +489,126 @@ describe('Customer.io In-App Plugin', () => {
       expect(spy).toHaveBeenCalledTimes(0)
     })
   })
+  describe('Embedded messages', () => {
+    it('reports a view as a content event keyed by the embed id', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageShown({
+        messageId: 'gist-html-1',
+        embedId: 'emb_1',
+        properties: { gist: { encodedMessageHtml: 'H4sIAAAA' } },
+      })
+      expect(spy).toBeCalledWith('Report Content Event', {
+        actionType: 'viewed_content',
+        contentId: 'emb_1',
+        contentType: 'in_app_content',
+      })
+      expect(spy).toBeCalledTimes(1)
+    })
+
+    it('reports a click as a content event keyed by the embed id', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageAction({
+        message: {
+          messageId: 'gist-html-1',
+          embedId: 'emb_1',
+          properties: { gist: { encodedMessageHtml: 'H4sIAAAA' } },
+        },
+        action: 'https://example.com',
+        name: 'cta',
+      })
+      expect(spy).toBeCalledWith('Report Content Event', {
+        actionType: 'clicked_content',
+        contentId: 'emb_1',
+        contentType: 'in_app_content',
+        actionName: 'cta',
+        actionValue: 'https://example.com',
+      })
+      expect(spy).toBeCalledTimes(1)
+    })
+
+    it('reports nothing for a dismiss click', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageAction({
+        message: { messageId: 'gist-html-1', embedId: 'emb_1' },
+        action: 'gist://close',
+        name: 'close',
+      })
+      expect(spy).toHaveBeenCalledTimes(0)
+    })
+
+    it('prefers the embed over a campaign when a payload carries both', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageShown({
+        messageId: 'gist-html-1',
+        embedId: 'emb_1',
+        properties: { gist: { campaignId: 'testcampaign' } },
+      })
+      expect(spy).not.toBeCalledWith('Report Delivery Event', expect.anything())
+      expect(spy).toBeCalledWith(
+        'Report Content Event',
+        expect.objectContaining({ contentId: 'emb_1' })
+      )
+    })
+  })
+
+  describe('Embed-only hosts', () => {
+    beforeEach(() => {
+      ;(Gist as any).mountEmbeds = jest.fn(() => Promise.resolve([]))
+      ;(Gist as any).embed = jest.fn(() => Promise.resolve('instance-1'))
+      document.body.innerHTML = ''
+    })
+
+    async function registerEmbedOnly(
+      settings: Partial<InAppPluginSettings> = {}
+    ) {
+      analytics = new Analytics({ writeKey: 'foo' })
+      await analytics.register(
+        InAppPlugin({ embedOnly: true, ...settings } as InAppPluginSettings),
+        pageEnrichment
+      )
+    }
+
+    it('initializes without a siteId and puts the SDK in embed-only mode', async () => {
+      await registerEmbedOnly()
+
+      expect(Gist.setup).toBeCalledWith(
+        expect.objectContaining({ embedOnly: true, siteId: '' })
+      )
+    })
+
+    it('mounts the embeds declared on the page', async () => {
+      await registerEmbedOnly()
+
+      expect((Gist as any).mountEmbeds).toBeCalledTimes(1)
+    })
+
+    it('exposes a programmatic embed API for hosts with no markup', async () => {
+      await registerEmbedOnly()
+
+      const payload = {
+        embedId: 'emb_1',
+        message: { messageId: 'gist-html-1' },
+      }
+      const instanceId = await (analytics as any).embed(payload)
+
+      expect((Gist as any).embed).toBeCalledWith(payload)
+      expect(instanceId).toBe('instance-1')
+    })
+
+    it('reports a version mismatch only when the page declares embeds', async () => {
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {})
+      delete (Gist as any).mountEmbeds
+
+      await registerEmbedOnly()
+      expect(error).not.toBeCalled()
+
+      document.body.innerHTML =
+        '<script type="application/json" data-cio-embed-payload="emb_1">{}</script>'
+      await registerEmbedOnly()
+
+      expect(error).toBeCalledWith(
+        expect.stringContaining('does not support them')
+      )
+    })
+  })
 })

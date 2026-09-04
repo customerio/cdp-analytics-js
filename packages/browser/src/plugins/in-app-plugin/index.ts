@@ -20,14 +20,22 @@ export { InAppEvents, InboxEvents }
 export type { InboxAPI, InboxMessage, ColorScheme }
 
 export type InAppPluginSettings = {
-  siteId: string | undefined
-  events: EventListenerOrEventListenerObject | null | undefined
+  siteId?: string
+  events?: EventListenerOrEventListenerObject | null
 
-  _env: GistConfig['env'] | undefined
-  _logging: GistConfig['logging'] | undefined
+  _env?: GistConfig['env']
+  _logging?: GistConfig['logging']
 
-  anonymousInApp: boolean | false
+  anonymousInApp?: boolean
   enabled?: boolean
+  /**
+   * Set by a host that only places embedded messages — a landing-page snippet,
+   * typically. The SDK then renders the embeds declared on the page and starts
+   * none of the delivery machinery: no user queue, SSE, guest session or inbox.
+   * Leave unset for a workspace that also receives in-app messages, so both
+   * work on the same page.
+   */
+  embedOnly?: boolean
   /**
    * Controls the color scheme for in-app messages.
    * - `'default'` — always use light mode
@@ -37,6 +45,32 @@ export type InAppPluginSettings = {
    * Defaults to `'default'` (light) when not specified.
    */
   colorScheme?: GistConfig['colorScheme']
+}
+
+/**
+ * The embedded-message surface of the SDK. The plugin and gist-web are separate
+ * lazily-loaded chunks that can be paired across versions, so it is detected
+ * rather than assumed: an older SDK renders no embeds instead of throwing.
+ * Collapses to a direct import once the pinned gist-web includes it.
+ */
+type GistEmbedSurface = {
+  embed?: (payload: unknown) => Promise<string | null>
+  mountEmbeds?: () => Promise<string[]>
+}
+
+const gistEmbeds = Gist as unknown as GistEmbedSurface
+
+function supportsEmbeds(): boolean {
+  return typeof gistEmbeds.mountEmbeds === 'function'
+}
+
+// Mirrors the attribute the SDK scans for. Only used to decide whether a
+// version mismatch is worth reporting, so a page with no embeds stays quiet.
+const EMBED_PAYLOAD_SELECTOR =
+  'script[type="application/json"][data-cio-embed-payload]'
+
+function pageDeclaresEmbeds(): boolean {
+  return document.querySelector(EMBED_PAYLOAD_SELECTOR) !== null
 }
 
 if (hasQueryString('cio_debug_session', 'true')) {
@@ -74,6 +108,7 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
             newEvent(gistToCIO(event), {
               messageId: message.messageId,
               deliveryId: message.properties?.gist?.campaignId,
+              embedId: message.embedId,
             })
           )
         })
@@ -82,11 +117,13 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
 
     Gist.events.on('messageShown', (message: any) => {
       const deliveryId: string = message?.properties?.gist?.campaignId
+      const embedId: string | undefined = message?.embedId
       if (settings.events) {
         _eventTarget.dispatchEvent(
           newEvent(InAppEvents.MessageOpened, {
             messageId: message?.messageId,
             deliveryId: deliveryId,
+            embedId: embedId,
             message: {
               dismiss: function () {
                 void Gist.dismissMessage(message?.instanceId)
@@ -94,6 +131,17 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
             },
           })
         )
+      }
+      // An embed is placed by the page rather than delivered by a campaign or
+      // broadcast, so it reports as content keyed by its embed id and never as
+      // a delivery.
+      if (embedId) {
+        void _analytics.track(JourneysEvents.Content, {
+          actionType: JourneysEvents.ViewedContent,
+          contentId: embedId,
+          contentType: ContentType,
+        })
+        return
       }
       if (typeof deliveryId !== 'undefined' && deliveryId !== '') {
         void _analytics.track(JourneysEvents.Metric, {
@@ -162,11 +210,13 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
 
     Gist.events.on('messageAction', (params: any) => {
       const deliveryId: string = params?.message?.properties?.gist?.campaignId
+      const embedId: string | undefined = params?.message?.embedId
       if (settings.events) {
         _eventTarget.dispatchEvent(
           newEvent(InAppEvents.MessageAction, {
             messageId: params.message.messageId,
             deliveryId: deliveryId,
+            embedId: embedId,
             action: params.action,
             name: params.name,
             actionName: params.name,
@@ -180,6 +230,16 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         )
       }
       if (params.action === 'gist://close') {
+        return
+      }
+      if (embedId) {
+        void _analytics.track(JourneysEvents.Content, {
+          actionType: JourneysEvents.ClickedContent,
+          contentId: embedId,
+          contentType: ContentType,
+          actionName: params.name,
+          actionValue: params.action,
+        })
         return
       }
       if (typeof deliveryId !== 'undefined' && deliveryId !== '') {
@@ -264,7 +324,13 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
     load: async (ctx: Context, instance: Analytics) => {
       _analytics = instance
 
-      if (settings.siteId == null || settings.siteId === '') {
+      // An embed-only host has no queue to authenticate against, so it can run
+      // without a siteId — the workspace supplies one only when in-app
+      // messaging is enabled for it.
+      if (
+        !settings.embedOnly &&
+        (settings.siteId == null || settings.siteId === '')
+      ) {
         _error("siteId is required. Can't initialize.")
         return ctx
       }
@@ -272,12 +338,13 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
       await setAnonymousId()
 
       await Gist.setup({
-        siteId: settings.siteId,
+        siteId: settings.siteId ?? '',
         env: settings._env ? settings._env : 'prod',
         logging: settings._logging,
         useAnonymousSession: settings.anonymousInApp,
         colorScheme: settings.colorScheme,
-      })
+        embedOnly: settings.embedOnly,
+      } as GistConfig)
       _gistLoaded = true
 
       await syncUserToken(ctx)
@@ -290,8 +357,36 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         }
         return createInboxAPI(instance, Gist, topics)
       }
-
+      ;(instance as any).embed = async (
+        payload: unknown
+      ): Promise<string | null> => {
+        if (!gistEmbeds.embed) {
+          _error(
+            'Embedded messages are not supported by the loaded in-app SDK.'
+          )
+          return null
+        }
+        return gistEmbeds.embed(payload)
+      }
       _pluginLoaded = true
+
+      // Embeds are declared in the page's own markup, and mounting is deliberately
+      // not awaited: the SDK waits for each container to appear, which must not
+      // hold up analytics.load. Listeners are already attached, so the view each
+      // embed reports on render is captured.
+      if (supportsEmbeds()) {
+        // Wrapped rather than assumed to be a promise: feature detection only
+        // proves mountEmbeds is a function, and a mismatched SDK must not break
+        // plugin load. Caught rather than left floating, because an unhandled
+        // rejection on a customer's page surfaces as ours.
+        Promise.resolve(gistEmbeds.mountEmbeds?.()).catch((error: unknown) => {
+          _error(`Failed to mount embedded messages: ${String(error)}`)
+        })
+      } else if (pageDeclaresEmbeds()) {
+        _error(
+          'This page declares embedded messages, but the loaded in-app SDK does not support them.'
+        )
+      }
 
       return Promise.resolve()
     },
