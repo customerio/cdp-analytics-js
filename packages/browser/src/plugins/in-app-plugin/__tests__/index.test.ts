@@ -612,6 +612,26 @@ describe('Customer.io In-App Plugin', () => {
       expect(instanceId).toBe('instance-1')
     })
 
+    it('re-scans for payload blocks on page(), for apps that render them late', async () => {
+      await registerEmbedOnly()
+      expect((Gist as any).mountEmbeds).toBeCalledTimes(1)
+
+      // What a single-page app does: new markup, then a page() call.
+      document.body.innerHTML =
+        '<div data-cio-embed="emb_late"></div>' +
+        '<script type="application/json" data-cio-embed-payload="emb_late">{}</script>'
+      await analytics.page('/second-route')
+
+      expect((Gist as any).mountEmbeds).toBeCalledTimes(2)
+    })
+
+    it('does not re-scan on page() when the SDK has no embed support', async () => {
+      await registerEmbedOnly()
+      delete (Gist as any).mountEmbeds
+
+      await expect(analytics.page('/second-route')).resolves.toBeDefined()
+    })
+
     it('survives an SDK whose mountEmbeds throws synchronously', async () => {
       const error = jest.spyOn(console, 'error').mockImplementation(() => {})
       ;(Gist as any).mountEmbeds = jest.fn(() => {

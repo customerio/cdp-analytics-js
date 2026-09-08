@@ -325,6 +325,14 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
       void Gist.setCurrentRoute(page)
     }
 
+    // Payload blocks are scanned once when the plugin loads, so an app that
+    // renders embed markup client-side would never be noticed. page() is the
+    // signal such an app already sends on navigation, and re-scanning is cheap:
+    // one querySelectorAll, and embeds already on screen are skipped.
+    if (supportsEmbeds()) {
+      mountEmbedsSafely()
+    }
+
     return ctx
   }
 
