@@ -48,36 +48,24 @@ export type InAppPluginSettings = {
 }
 
 /**
- * The embedded-message surface of the SDK. The plugin and gist-web are separate
- * lazily-loaded chunks that can be paired across versions, so it is detected
- * rather than assumed: an older SDK renders no embeds instead of throwing.
- * Collapses to a direct import once the pinned gist-web includes it.
+ * The embedded-message surface of the SDK. A cast only because the pinned
+ * customerio-gist-web predates it; it goes away when that dependency is bumped
+ * to a release that declares these. No feature detection: the plugin and
+ * gist-web are bundled from the same build, so they ship as a unit.
  */
 type GistEmbedSurface = {
-  embed?: (payload: unknown) => Promise<string | null>
-  mountEmbeds?: () => Promise<string[]>
+  embed: (payload: unknown) => Promise<string | null>
+  mountEmbeds: () => Promise<string[]>
 }
 
 const gistEmbeds = Gist as unknown as GistEmbedSurface
 
-function supportsEmbeds(): boolean {
-  return typeof gistEmbeds.mountEmbeds === 'function'
-}
-
-// Mirrors the attribute the SDK scans for. Only used to decide whether a
-// version mismatch is worth reporting, so a page with no embeds stays quiet.
-const EMBED_PAYLOAD_SELECTOR =
-  'script[type="application/json"][data-cio-embed-payload]'
-
-function pageDeclaresEmbeds(): boolean {
-  return document.querySelector(EMBED_PAYLOAD_SELECTOR) !== null
-}
-
 /**
- * Mounts the embeds the page declares, and cannot fail the caller. Feature
- * detection only proves mountEmbeds is a function, so a mismatched SDK could
- * return a non-promise *or* throw synchronously — the latter is evaluated
- * before Promise.resolve, so .catch alone would let it reject plugin load.
+ * Mounts the embeds the page declares, and cannot fail the caller: mounting is
+ * best-effort page content, and nothing it does should be able to reject
+ * analytics.load. Both arms are needed — a synchronous throw is evaluated
+ * before Promise.resolve, so .catch alone would not see it.
+ *
  * Deliberately not awaited: the SDK waits for each container to appear, which
  * must not hold up analytics.load.
  */
@@ -85,7 +73,7 @@ function mountEmbedsSafely(): void {
   const failed = (error: unknown) =>
     _error(`Failed to mount embedded messages: ${String(error)}`)
   try {
-    Promise.resolve(gistEmbeds.mountEmbeds?.()).catch(failed)
+    Promise.resolve(gistEmbeds.mountEmbeds()).catch(failed)
   } catch (error) {
     failed(error)
   }
@@ -329,9 +317,7 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
     // renders embed markup client-side would never be noticed. page() is the
     // signal such an app already sends on navigation, and re-scanning is cheap:
     // one querySelectorAll, and embeds already on screen are skipped.
-    if (supportsEmbeds()) {
-      mountEmbedsSafely()
-    }
+    mountEmbedsSafely()
 
     return ctx
   }
@@ -398,26 +384,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
       }
       ;(instance as any).embed = async (
         payload: unknown
-      ): Promise<string | null> => {
-        if (!gistEmbeds.embed) {
-          _error(
-            'Embedded messages are not supported by the loaded in-app SDK.'
-          )
-          return null
-        }
-        return gistEmbeds.embed(payload)
-      }
+      ): Promise<string | null> => gistEmbeds.embed(payload)
       _pluginLoaded = true
 
       // Listeners are already attached, so the view each embed reports on
       // render is captured.
-      if (supportsEmbeds()) {
-        mountEmbedsSafely()
-      } else if (pageDeclaresEmbeds()) {
-        _error(
-          'This page declares embedded messages, but the loaded in-app SDK does not support them.'
-        )
-      }
+      mountEmbedsSafely()
 
       return Promise.resolve()
     },

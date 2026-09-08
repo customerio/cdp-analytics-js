@@ -418,7 +418,6 @@ describe('Customer.io In-App Plugin', () => {
         })
       )
     })
-
   })
 
   describe('Anonymous', () => {
@@ -625,14 +624,7 @@ describe('Customer.io In-App Plugin', () => {
       expect((Gist as any).mountEmbeds).toBeCalledTimes(2)
     })
 
-    it('does not re-scan on page() when the SDK has no embed support', async () => {
-      await registerEmbedOnly()
-      delete (Gist as any).mountEmbeds
-
-      await expect(analytics.page('/second-route')).resolves.toBeDefined()
-    })
-
-    it('survives an SDK whose mountEmbeds throws synchronously', async () => {
+    it('never lets a mounting failure reject plugin load', async () => {
       const error = jest.spyOn(console, 'error').mockImplementation(() => {})
       ;(Gist as any).mountEmbeds = jest.fn(() => {
         throw new Error('boom')
@@ -647,20 +639,5 @@ describe('Customer.io In-App Plugin', () => {
       error.mockRestore()
     })
 
-    it('reports a version mismatch only when the page declares embeds', async () => {
-      const error = jest.spyOn(console, 'error').mockImplementation(() => {})
-      delete (Gist as any).mountEmbeds
-
-      await registerEmbedOnly()
-      expect(error).not.toBeCalled()
-
-      document.body.innerHTML =
-        '<script type="application/json" data-cio-embed-payload="emb_1">{}</script>'
-      await registerEmbedOnly()
-
-      expect(error).toBeCalledWith(
-        expect.stringContaining('does not support them')
-      )
-    })
   })
 })
