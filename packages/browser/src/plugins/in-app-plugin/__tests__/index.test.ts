@@ -612,6 +612,21 @@ describe('Customer.io In-App Plugin', () => {
       expect(instanceId).toBe('instance-1')
     })
 
+    it('survives an SDK whose mountEmbeds throws synchronously', async () => {
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {})
+      ;(Gist as any).mountEmbeds = jest.fn(() => {
+        throw new Error('boom')
+      })
+
+      // A synchronous throw is evaluated before Promise.resolve, so .catch
+      // alone would let it reject plugin load.
+      await expect(registerEmbedOnly()).resolves.not.toThrow()
+      expect(error).toBeCalledWith(
+        expect.stringContaining('Failed to mount embedded messages')
+      )
+      error.mockRestore()
+    })
+
     it('reports a version mismatch only when the page declares embeds', async () => {
       const error = jest.spyOn(console, 'error').mockImplementation(() => {})
       delete (Gist as any).mountEmbeds

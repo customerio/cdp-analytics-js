@@ -74,6 +74,24 @@ function pageDeclaresEmbeds(): boolean {
 }
 
 /**
+ * Mounts the embeds the page declares, and cannot fail the caller. Feature
+ * detection only proves mountEmbeds is a function, so a mismatched SDK could
+ * return a non-promise *or* throw synchronously — the latter is evaluated
+ * before Promise.resolve, so .catch alone would let it reject plugin load.
+ * Deliberately not awaited: the SDK waits for each container to appear, which
+ * must not hold up analytics.load.
+ */
+function mountEmbedsSafely(): void {
+  const failed = (error: unknown) =>
+    _error(`Failed to mount embedded messages: ${String(error)}`)
+  try {
+    Promise.resolve(gistEmbeds.mountEmbeds?.()).catch(failed)
+  } catch (error) {
+    failed(error)
+  }
+}
+
+/**
  * Reporting identity for content that belongs to no campaign — an anonymous
  * broadcast, or an embed the page supplied. Both report as the same content
  * event through the same call: the pipeline requires an integer contentId and
@@ -383,18 +401,10 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
       }
       _pluginLoaded = true
 
-      // Embeds are declared in the page's own markup, and mounting is deliberately
-      // not awaited: the SDK waits for each container to appear, which must not
-      // hold up analytics.load. Listeners are already attached, so the view each
-      // embed reports on render is captured.
+      // Listeners are already attached, so the view each embed reports on
+      // render is captured.
       if (supportsEmbeds()) {
-        // Wrapped rather than assumed to be a promise: feature detection only
-        // proves mountEmbeds is a function, and a mismatched SDK must not break
-        // plugin load. Caught rather than left floating, because an unhandled
-        // rejection on a customer's page surfaces as ours.
-        Promise.resolve(gistEmbeds.mountEmbeds?.()).catch((error: unknown) => {
-          _error(`Failed to mount embedded messages: ${String(error)}`)
-        })
+        mountEmbedsSafely()
       } else if (pageDeclaresEmbeds()) {
         _error(
           'This page declares embedded messages, but the loaded in-app SDK does not support them.'
