@@ -1,7 +1,7 @@
 import { Analytics } from '../../../core/analytics'
 import { pageEnrichment } from '../../page-enrichment'
 import { CustomerioSettings } from '../../customerio'
-import { InAppPlugin, InAppPluginSettings, InAppEvents, InboxEvents } from '../'
+import { InAppPlugin, InAppPluginSettings, InboxEvents } from '../'
 import Gist from 'customerio-gist-web'
 
 describe('Customer.io In-App Plugin', () => {
@@ -564,75 +564,6 @@ describe('Customer.io In-App Plugin', () => {
         metric: 'opened',
       })
       expect(spy).toBeCalledTimes(1)
-    })
-  })
-
-  describe('Embedded message events', () => {
-    let eventListener: jest.Mock
-    let shown: Function
-    let action: Function
-
-    beforeEach(async () => {
-      eventListener = jest.fn()
-      const eventsAnalytics = new Analytics({ writeKey: 'foo' })
-
-      Gist.events = {
-        on: jest.fn((name: string, cb: Function) => {
-          if (name === 'messageShown') {
-            shown = cb
-          } else if (name === 'messageAction') {
-            action = cb
-          }
-        }),
-        off: jest.fn(),
-        dispatch: jest.fn(),
-      } as unknown as typeof Gist.events
-
-      await eventsAnalytics.register(
-        InAppPlugin({
-          siteId: 'siteid',
-          events: eventListener,
-        } as InAppPluginSettings),
-        pageEnrichment
-      )
-    })
-
-    // An existing integration's handler starts receiving embed events
-    // alongside its campaign ones, and deliveryId cannot separate them: it is
-    // empty for anonymous broadcasts too. embedId is the discriminator, and it
-    // is the id the host itself wrote into its own markup.
-    it('carries the embedId on a view so a host can tell an embed from a campaign', () => {
-      shown({
-        messageId: 'gist-html-1',
-        embedId: 'emb_1',
-        properties: { gist: { contentId: 42, templateId: 7 } },
-      })
-
-      expect(eventListener).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: InAppEvents.MessageOpened,
-          detail: expect.objectContaining({ embedId: 'emb_1' }),
-        })
-      )
-    })
-
-    it('carries the embedId on a click', () => {
-      action({
-        message: {
-          messageId: 'gist-html-1',
-          embedId: 'emb_1',
-          properties: { gist: { contentId: 42, templateId: 7 } },
-        },
-        action: 'https://example.com',
-        name: 'cta',
-      })
-
-      expect(eventListener).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: InAppEvents.MessageAction,
-          detail: expect.objectContaining({ embedId: 'emb_1' }),
-        })
-      )
     })
   })
 

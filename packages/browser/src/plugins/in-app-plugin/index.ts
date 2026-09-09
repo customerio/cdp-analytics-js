@@ -151,7 +151,6 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
             newEvent(gistToCIO(event), {
               messageId: message.messageId,
               deliveryId: message.properties?.gist?.campaignId,
-              embedId: message.embedId,
             })
           )
         })
@@ -165,7 +164,6 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
           newEvent(InAppEvents.MessageOpened, {
             messageId: message?.messageId,
             deliveryId: deliveryId,
-            embedId: message?.embedId,
             message: {
               dismiss: function () {
                 void Gist.dismissMessage(message?.instanceId)
@@ -241,7 +239,6 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
           newEvent(InAppEvents.MessageAction, {
             messageId: params.message.messageId,
             deliveryId: deliveryId,
-            embedId: params?.message?.embedId,
             action: params.action,
             name: params.name,
             actionName: params.name,
