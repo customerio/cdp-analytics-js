@@ -85,41 +85,35 @@ function mountEmbedsSafely(): void {
  * event through the same call: the pipeline requires an integer contentId and
  * templateId (services core/batch/batch.go), so an embed payload has to carry
  * them exactly as a broadcast does.
+ *
+ * Says so when they are incomplete rather than resolving quietly: such an
+ * event is accepted at the edge and dropped by the consumer, which is silent
+ * from here, so the metric would otherwise simply never appear.
  */
-function contentIds(message: any): {
+function resolveContentIds(message: any): {
   contentId?: number
   templateId?: number
 } {
   const gist = message?.properties?.gist
   const broadcast = gist?.broadcast
-  if (broadcast) {
-    return {
-      contentId: broadcast.broadcastIdInt || broadcast.broadcastId,
-      templateId: broadcast.templateId,
-    }
-  }
-  return { contentId: gist?.contentId, templateId: gist?.templateId }
-}
+  const ids = broadcast
+    ? {
+        contentId: broadcast.broadcastIdInt || broadcast.broadcastId,
+        templateId: broadcast.templateId,
+      }
+    : { contentId: gist?.contentId, templateId: gist?.templateId }
 
-// A content event with a missing id is accepted at the edge and dropped by the
-// consumer, which is silent from here — so say so rather than let the metric
-// simply never appear.
-function warnMissingContentIds(
-  message: any,
-  contentId?: number,
-  templateId?: number
-): void {
-  if (contentId && templateId) return
-  const embedId = message?.embedId
-  if (embedId) {
+  if (message?.embedId && !(ids.contentId && ids.templateId)) {
     _error(
-      `Embedded message ${embedId} carries no contentId/templateId, so its events cannot be reported.`
+      `Embedded message ${message.embedId} carries no contentId/templateId, so its events cannot be reported.`
     )
-  } else if (contentId && !templateId) {
+  } else if (ids.contentId && !ids.templateId) {
     _error(
-      `Content event for contentId ${contentId} has no templateId; the pipeline requires both and will drop it.`
+      `Content event for contentId ${ids.contentId} has no templateId; the pipeline requires both and will drop it.`
     )
   }
+
+  return ids
 }
 
 if (hasQueryString('cio_debug_session', 'true')) {
@@ -166,13 +160,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
 
     Gist.events.on('messageShown', (message: any) => {
       const deliveryId: string = message?.properties?.gist?.campaignId
-      const embedId: string | undefined = message?.embedId
       if (settings.events) {
         _eventTarget.dispatchEvent(
           newEvent(InAppEvents.MessageOpened, {
             messageId: message?.messageId,
             deliveryId: deliveryId,
-            embedId: embedId,
+            embedId: message?.embedId,
             message: {
               dismiss: function () {
                 void Gist.dismissMessage(message?.instanceId)
@@ -188,8 +181,7 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         })
         return
       }
-      const { contentId, templateId } = contentIds(message)
-      warnMissingContentIds(message, contentId, templateId)
+      const { contentId, templateId } = resolveContentIds(message)
       if (contentId) {
         void _analytics.track(JourneysEvents.Content, {
           actionType: JourneysEvents.ViewedContent,
@@ -244,13 +236,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
 
     Gist.events.on('messageAction', (params: any) => {
       const deliveryId: string = params?.message?.properties?.gist?.campaignId
-      const embedId: string | undefined = params?.message?.embedId
       if (settings.events) {
         _eventTarget.dispatchEvent(
           newEvent(InAppEvents.MessageAction, {
             messageId: params.message.messageId,
             deliveryId: deliveryId,
-            embedId: embedId,
+            embedId: params?.message?.embedId,
             action: params.action,
             name: params.name,
             actionName: params.name,
@@ -275,8 +266,7 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         })
         return
       }
-      const { contentId, templateId } = contentIds(params?.message)
-      warnMissingContentIds(params?.message, contentId, templateId)
+      const { contentId, templateId } = resolveContentIds(params?.message)
       if (contentId) {
         void _analytics.track(JourneysEvents.Content, {
           actionType: JourneysEvents.ClickedContent,
