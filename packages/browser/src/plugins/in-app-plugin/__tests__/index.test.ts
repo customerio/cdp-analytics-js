@@ -418,7 +418,6 @@ describe('Customer.io In-App Plugin', () => {
         })
       )
     })
-
   })
 
   describe('Anonymous', () => {
@@ -488,5 +487,157 @@ describe('Customer.io In-App Plugin', () => {
       })
       expect(spy).toHaveBeenCalledTimes(0)
     })
+  })
+  describe('Embedded messages', () => {
+    const embedWithIds = {
+      messageId: 'gist-html-1',
+      embedId: 'emb_1',
+      properties: { gist: { encodedMessageHtml: 'H4sIAAAA', contentId: 42, templateId: 7 } },
+    }
+
+    it('reports a view through the same content event as a broadcast', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageShown(embedWithIds)
+      expect(spy).toBeCalledWith('Report Content Event', {
+        actionType: 'viewed_content',
+        contentId: 42,
+        templateId: 7,
+        contentType: 'in_app_content',
+      })
+      expect(spy).toBeCalledTimes(1)
+    })
+
+    it('reports a click through the same content event as a broadcast', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageAction({
+        message: embedWithIds,
+        action: 'https://example.com',
+        name: 'cta',
+      })
+      expect(spy).toBeCalledWith('Report Content Event', {
+        actionType: 'clicked_content',
+        contentId: 42,
+        templateId: 7,
+        contentType: 'in_app_content',
+        actionName: 'cta',
+        actionValue: 'https://example.com',
+      })
+      expect(spy).toBeCalledTimes(1)
+    })
+
+    it('says so rather than reporting nothing when a payload carries no ids', async () => {
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {})
+      const spy = jest.spyOn(analytics, 'track')
+
+      gistMessageShown({
+        messageId: 'gist-html-1',
+        embedId: 'emb_1',
+        properties: { gist: { encodedMessageHtml: 'H4sIAAAA' } },
+      })
+
+      expect(spy).not.toBeCalled()
+      expect(error).toBeCalledWith(
+        expect.stringContaining('carries no contentId/templateId')
+      )
+      error.mockRestore()
+    })
+
+    it('reports nothing for a dismiss click', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageAction({
+        message: embedWithIds,
+        action: 'gist://close',
+        name: 'close',
+      })
+      expect(spy).toHaveBeenCalledTimes(0)
+    })
+
+    it('reports a campaign delivery when the payload carries one', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageShown({
+        messageId: 'gist-html-1',
+        embedId: 'emb_1',
+        properties: { gist: { campaignId: 'testcampaign', contentId: 42, templateId: 7 } },
+      })
+      expect(spy).toBeCalledWith('Report Delivery Event', {
+        deliveryId: 'testcampaign',
+        metric: 'opened',
+      })
+      expect(spy).toBeCalledTimes(1)
+    })
+  })
+
+  describe('Embed-only hosts', () => {
+    beforeEach(() => {
+      ;(Gist as any).mountEmbeds = jest.fn(() => Promise.resolve([]))
+      ;(Gist as any).embed = jest.fn(() => Promise.resolve('instance-1'))
+      document.body.innerHTML = ''
+    })
+
+    async function registerEmbedOnly(
+      settings: Partial<InAppPluginSettings> = {}
+    ) {
+      analytics = new Analytics({ writeKey: 'foo' })
+      await analytics.register(
+        InAppPlugin({ embedOnly: true, ...settings } as InAppPluginSettings),
+        pageEnrichment
+      )
+    }
+
+    it('initializes without a siteId and puts the SDK in embed-only mode', async () => {
+      await registerEmbedOnly()
+
+      expect(Gist.setup).toBeCalledWith(
+        expect.objectContaining({ embedOnly: true, siteId: '' })
+      )
+    })
+
+    it('mounts the embeds declared on the page', async () => {
+      await registerEmbedOnly()
+
+      expect((Gist as any).mountEmbeds).toBeCalledTimes(1)
+    })
+
+    it('exposes a programmatic embed API for hosts with no markup', async () => {
+      await registerEmbedOnly()
+
+      const payload = {
+        embedId: 'emb_1',
+        message: { messageId: 'gist-html-1' },
+      }
+      const instanceId = await (analytics as any).embed(payload)
+
+      expect((Gist as any).embed).toBeCalledWith(payload)
+      expect(instanceId).toBe('instance-1')
+    })
+
+    it('re-scans for payload blocks on page(), for apps that render them late', async () => {
+      await registerEmbedOnly()
+      expect((Gist as any).mountEmbeds).toBeCalledTimes(1)
+
+      // What a single-page app does: new markup, then a page() call.
+      document.body.innerHTML =
+        '<div data-cio-embed="emb_late"></div>' +
+        '<script type="application/json" data-cio-embed-payload="emb_late">{}</script>'
+      await analytics.page('/second-route')
+
+      expect((Gist as any).mountEmbeds).toBeCalledTimes(2)
+    })
+
+    it('never lets a mounting failure reject plugin load', async () => {
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {})
+      ;(Gist as any).mountEmbeds = jest.fn(() => {
+        throw new Error('boom')
+      })
+
+      // A synchronous throw is evaluated before Promise.resolve, so .catch
+      // alone would let it reject plugin load.
+      await expect(registerEmbedOnly()).resolves.not.toThrow()
+      expect(error).toBeCalledWith(
+        expect.stringContaining('Failed to mount embedded messages')
+      )
+      error.mockRestore()
+    })
+
   })
 })

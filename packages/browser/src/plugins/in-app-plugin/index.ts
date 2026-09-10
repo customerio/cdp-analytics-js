@@ -12,7 +12,11 @@ import {
   gistToCIO,
   ContentType,
 } from './events'
-import Gist, { type GistConfig, type ColorScheme } from 'customerio-gist-web'
+import Gist, {
+  type GistConfig,
+  type ColorScheme,
+  type EmbedPayload,
+} from 'customerio-gist-web'
 import type { InboxAPI, InboxMessage, GistInboxMessage, InboxActionConfig, InboxMessageActionParams } from './inbox_messages'
 import { createInboxAPI } from './inbox_messages'
 
@@ -20,14 +24,22 @@ export { InAppEvents, InboxEvents }
 export type { InboxAPI, InboxMessage, ColorScheme }
 
 export type InAppPluginSettings = {
-  siteId: string | undefined
-  events: EventListenerOrEventListenerObject | null | undefined
+  siteId?: string
+  events?: EventListenerOrEventListenerObject | null
 
-  _env: GistConfig['env'] | undefined
-  _logging: GistConfig['logging'] | undefined
+  _env?: GistConfig['env']
+  _logging?: GistConfig['logging']
 
-  anonymousInApp: boolean | false
+  anonymousInApp?: boolean
   enabled?: boolean
+  /**
+   * Set by a host that only places embedded messages — a landing-page snippet,
+   * typically. The SDK then renders the embeds declared on the page and starts
+   * none of the delivery machinery: no user queue, SSE, guest session or inbox.
+   * Leave unset for a workspace that also receives in-app messages, so both
+   * work on the same page.
+   */
+  embedOnly?: boolean
   /**
    * Controls the color scheme for in-app messages.
    * - `'default'` — always use light mode
@@ -37,6 +49,62 @@ export type InAppPluginSettings = {
    * Defaults to `'default'` (light) when not specified.
    */
   colorScheme?: GistConfig['colorScheme']
+}
+
+/**
+ * Mounts the embeds the page declares, and cannot fail the caller: mounting is
+ * best-effort page content, and nothing it does should be able to reject
+ * analytics.load. Both arms are needed — a synchronous throw is evaluated
+ * before Promise.resolve, so .catch alone would not see it.
+ *
+ * Deliberately not awaited: the SDK waits for each container to appear, which
+ * must not hold up analytics.load.
+ */
+function mountEmbedsSafely(): void {
+  const failed = (error: unknown) =>
+    _error(`Failed to mount embedded messages: ${String(error)}`)
+  try {
+    Promise.resolve(Gist.mountEmbeds()).catch(failed)
+  } catch (error) {
+    failed(error)
+  }
+}
+
+/**
+ * Reporting identity for content that belongs to no campaign — an anonymous
+ * broadcast, or an embed the page supplied. Both report as the same content
+ * event through the same call: the pipeline requires an integer contentId and
+ * templateId (services core/batch/batch.go), so an embed payload has to carry
+ * them exactly as a broadcast does.
+ *
+ * Says so when they are incomplete rather than resolving quietly: such an
+ * event is accepted at the edge and dropped by the consumer, which is silent
+ * from here, so the metric would otherwise simply never appear.
+ */
+function resolveContentIds(message: any): {
+  contentId?: number
+  templateId?: number
+} {
+  const gist = message?.properties?.gist
+  const broadcast = gist?.broadcast
+  const ids = broadcast
+    ? {
+        contentId: broadcast.broadcastIdInt || broadcast.broadcastId,
+        templateId: broadcast.templateId,
+      }
+    : { contentId: gist?.contentId, templateId: gist?.templateId }
+
+  if (message?.embedId && !(ids.contentId && ids.templateId)) {
+    _error(
+      `Embedded message ${message.embedId} carries no contentId/templateId, so its events cannot be reported.`
+    )
+  } else if (ids.contentId && !ids.templateId) {
+    _error(
+      `Content event for contentId ${ids.contentId} has no templateId; the pipeline requires both and will drop it.`
+    )
+  }
+
+  return ids
 }
 
 if (hasQueryString('cio_debug_session', 'true')) {
@@ -102,16 +170,11 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         })
         return
       }
-      let broadcastId: Number =
-        message?.properties?.gist?.broadcast?.broadcastIdInt
-      if (!broadcastId) {
-        broadcastId = message?.properties?.gist?.broadcast?.broadcastId
-      }
-      if (broadcastId) {
-        const templateId = message?.properties?.gist?.broadcast?.templateId
+      const { contentId, templateId } = resolveContentIds(message)
+      if (contentId) {
         void _analytics.track(JourneysEvents.Content, {
           actionType: JourneysEvents.ViewedContent,
-          contentId: broadcastId,
+          contentId: contentId,
           templateId: templateId,
           contentType: ContentType,
         })
@@ -191,17 +254,11 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         })
         return
       }
-      let broadcastId: Number =
-        params?.message?.properties?.gist?.broadcast?.broadcastIdInt
-      if (!broadcastId) {
-        broadcastId = params?.message?.properties?.gist?.broadcast?.broadcastId
-      }
-      if (broadcastId) {
-        const templateId: Number =
-          params?.message?.properties?.gist?.broadcast?.templateId
+      const { contentId, templateId } = resolveContentIds(params?.message)
+      if (contentId) {
         void _analytics.track(JourneysEvents.Content, {
           actionType: JourneysEvents.ClickedContent,
-          contentId: broadcastId,
+          contentId: contentId,
           templateId: templateId,
           contentType: ContentType,
           actionName: params.name,
@@ -234,6 +291,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
       void Gist.setCurrentRoute(page)
     }
 
+    // Payload blocks are scanned once when the plugin loads, so an app that
+    // renders embed markup client-side would never be noticed. page() is the
+    // signal such an app already sends on navigation, and re-scanning is cheap:
+    // one querySelectorAll, and embeds already on screen are skipped.
+    mountEmbedsSafely()
+
     return ctx
   }
 
@@ -264,7 +327,13 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
     load: async (ctx: Context, instance: Analytics) => {
       _analytics = instance
 
-      if (settings.siteId == null || settings.siteId === '') {
+      // An embed-only host has no queue to authenticate against, so it can run
+      // without a siteId — the workspace supplies one only when in-app
+      // messaging is enabled for it.
+      if (
+        !settings.embedOnly &&
+        (settings.siteId == null || settings.siteId === '')
+      ) {
         _error("siteId is required. Can't initialize.")
         return ctx
       }
@@ -272,11 +341,12 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
       await setAnonymousId()
 
       await Gist.setup({
-        siteId: settings.siteId,
+        siteId: settings.siteId ?? '',
         env: settings._env ? settings._env : 'prod',
         logging: settings._logging,
         useAnonymousSession: settings.anonymousInApp,
         colorScheme: settings.colorScheme,
+        embedOnly: settings.embedOnly,
       })
       _gistLoaded = true
 
@@ -290,8 +360,14 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         }
         return createInboxAPI(instance, Gist, topics)
       }
-
+      ;(instance as any).embed = async (
+        payload: EmbedPayload
+      ): Promise<string | null> => Gist.embed(payload)
       _pluginLoaded = true
+
+      // Listeners are already attached, so the view each embed reports on
+      // render is captured.
+      mountEmbedsSafely()
 
       return Promise.resolve()
     },

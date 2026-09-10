@@ -85,4 +85,39 @@ describe('In-App Plugin integrations option', () => {
       expect.objectContaining({ siteId: 'override-site-id' })
     )
   })
+  it('runs in embed-only mode from load options when in-app is off for the workspace', async () => {
+    // CDN settings carry no in-app entry: the workspace does not use in-app
+    // messaging, and the page only wants its embeds rendered.
+    jest
+      .mocked(unfetch)
+      .mockImplementation(() => createSuccess({ integrations: {} }))
+
+    const [analytics] = await AnalyticsBrowser.load(
+      { writeKey: 'foo' },
+      { integrations: { [inAppPluginName]: { embedOnly: true } } }
+    )
+
+    const inApp = analytics.queue.plugins.find(
+      (p) => p.name === inAppPluginName
+    )
+    expect(inApp).toBeDefined()
+    expect(Gist.setup).toHaveBeenCalledWith(
+      expect.objectContaining({ embedOnly: true })
+    )
+  })
+
+  it('keeps embed-only from load options alongside a workspace siteId', async () => {
+    const [analytics] = await AnalyticsBrowser.load(
+      { writeKey: 'foo' },
+      { integrations: { [inAppPluginName]: { embedOnly: true } } }
+    )
+
+    const inApp = analytics.queue.plugins.find(
+      (p) => p.name === inAppPluginName
+    )
+    expect(inApp).toBeDefined()
+    expect(Gist.setup).toHaveBeenCalledWith(
+      expect.objectContaining({ siteId: 'cdn-site-id', embedOnly: true })
+    )
+  })
 })
