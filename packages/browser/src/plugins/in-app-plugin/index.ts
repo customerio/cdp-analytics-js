@@ -12,7 +12,11 @@ import {
   gistToCIO,
   ContentType,
 } from './events'
-import Gist, { type GistConfig, type ColorScheme } from 'customerio-gist-web'
+import Gist, {
+  type GistConfig,
+  type ColorScheme,
+  type EmbedPayload,
+} from 'customerio-gist-web'
 import type { InboxAPI, InboxMessage, GistInboxMessage, InboxActionConfig, InboxMessageActionParams } from './inbox_messages'
 import { createInboxAPI } from './inbox_messages'
 
@@ -48,19 +52,6 @@ export type InAppPluginSettings = {
 }
 
 /**
- * The embedded-message surface of the SDK. A cast only because the pinned
- * customerio-gist-web predates it; it goes away when that dependency is bumped
- * to a release that declares these. No feature detection: the plugin and
- * gist-web are bundled from the same build, so they ship as a unit.
- */
-type GistEmbedSurface = {
-  embed: (payload: unknown) => Promise<string | null>
-  mountEmbeds: () => Promise<string[]>
-}
-
-const gistEmbeds = Gist as unknown as GistEmbedSurface
-
-/**
  * Mounts the embeds the page declares, and cannot fail the caller: mounting is
  * best-effort page content, and nothing it does should be able to reject
  * analytics.load. Both arms are needed — a synchronous throw is evaluated
@@ -73,7 +64,7 @@ function mountEmbedsSafely(): void {
   const failed = (error: unknown) =>
     _error(`Failed to mount embedded messages: ${String(error)}`)
   try {
-    Promise.resolve(gistEmbeds.mountEmbeds()).catch(failed)
+    Promise.resolve(Gist.mountEmbeds()).catch(failed)
   } catch (error) {
     failed(error)
   }
@@ -356,7 +347,7 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         useAnonymousSession: settings.anonymousInApp,
         colorScheme: settings.colorScheme,
         embedOnly: settings.embedOnly,
-      } as GistConfig)
+      })
       _gistLoaded = true
 
       await syncUserToken(ctx)
@@ -370,8 +361,8 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         return createInboxAPI(instance, Gist, topics)
       }
       ;(instance as any).embed = async (
-        payload: unknown
-      ): Promise<string | null> => gistEmbeds.embed(payload)
+        payload: EmbedPayload
+      ): Promise<string | null> => Gist.embed(payload)
       _pluginLoaded = true
 
       // Listeners are already attached, so the view each embed reports on
