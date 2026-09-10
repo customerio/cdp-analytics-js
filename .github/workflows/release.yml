@@ -161,6 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
 
     needs: [npm, github]
 
@@ -171,8 +172,8 @@ jobs:
 
       - name: Set Git Identity
         run: |
-          git config --global user.name "Customer.io"
-          git config --global user.email "win@customer.io"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Install
         run: |
@@ -200,8 +201,35 @@ jobs:
           git commit -am "Update version"
           git show
 
-      - name: Push changes
+      - name: Open and merge version bump PR
         if: ${{ github.event.inputs.dry-run == 'false' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          branch="release/version-bump-${{ github.run_id }}"
+          git checkout -b "$branch"
           git commit -am "Update version"
-          git push
+          git push origin "$branch"
+
+          pr_url=$(gh pr create \
+            --base "${{ github.ref_name }}" \
+            --head "$branch" \
+            --title "Update version" \
+            --body "Version bump from [release run ${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).")
+          echo "Opened $pr_url"
+
+          merge_once_github_finishes_computing_mergeability() {
+            for attempt in $(seq 6); do
+              gh pr merge "$branch" --squash && return 0
+              echo "Not mergeable yet (attempt $attempt), waiting 10s"
+              sleep 10
+            done
+            return 1
+          }
+
+          if merge_once_github_finishes_computing_mergeability; then
+            echo "Merged $pr_url"
+          else
+            echo "::error::Could not merge the version bump PR. Merge it manually: $pr_url"
+            exit 1
+          fi
