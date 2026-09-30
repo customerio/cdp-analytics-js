@@ -105,6 +105,20 @@ describe('standalone bundle', () => {
     expect(spy).toHaveBeenCalledWith('write_key_abc_123', {})
   })
 
+  it('refuses secret ak_ keys without loading', async () => {
+    window.analyticsWriteKey = 'ak_us_secret'
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const spy = jest.spyOn(AnalyticsBrowser, 'standalone')
+
+    await install()
+
+    expect(spy).not.toHaveBeenCalled()
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Use your public key in the browser')
+    )
+    window.analyticsWriteKey = undefined
+  })
+
   it('derives the write key from scripts on the page', async () => {
     const fakeAjs = {
       ready: async (cb: Function): Promise<void> => {

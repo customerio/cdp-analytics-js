@@ -29,6 +29,7 @@ import { Stats } from '../core/stats'
 import { InAppPluginSettings } from '../plugins/in-app-plugin'
 import { setGlobalAnalyticsKey } from '../lib/global-analytics-helper'
 import { hasQueryString } from '../core/query-string'
+import { isSecretKey, SECRET_KEY_ERROR } from '../lib/secret-key'
 
 export interface LegacyIntegrationConfiguration {
   /* @deprecated - This does not indicate browser types anymore */
@@ -288,6 +289,8 @@ async function loadAnalytics(
   options: InitOptions = {},
   preInitBuffer: PreInitMethodCallBuffer
 ): Promise<[Analytics, Context]> {
+  if (isSecretKey(settings.writeKey)) throw new Error(SECRET_KEY_ERROR)
+
   if (options.globalAnalyticsKey)
     setGlobalAnalyticsKey(options.globalAnalyticsKey)
   // this is an ugly side-effect, but it's for the benefits of the plugins that get their cdn via getCDN()
