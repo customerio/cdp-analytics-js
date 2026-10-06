@@ -226,6 +226,20 @@ async function registerPlugins(
         })
       : undefined
 
+  const webPushSettings =
+    (mergedSettings['Customer.io Web Push Plugin'] as unknown as
+      | import('../plugins/web-push-plugin').WebPushPluginSettings
+      | undefined) ??
+    (options.integrations?.['Customer.io Web Push Plugin'] as
+      | import('../plugins/web-push-plugin').WebPushPluginSettings
+      | undefined)
+  const webPushPlugin =
+    webPushSettings && webPushSettings.enabled !== false
+      ? await import(
+          /* webpackChunkName: "webPushPlugin" */ '../plugins/web-push-plugin'
+        ).then((mod) => mod.WebPushPlugin(webPushSettings))
+      : undefined
+
   const toRegister = [
     validation,
     pageEnrichment,
@@ -240,6 +254,9 @@ async function registerPlugins(
 
   if (inAppPlugin) {
     toRegister.push(inAppPlugin)
+  }
+  if (webPushPlugin) {
+    toRegister.push(webPushPlugin)
   }
 
   const shouldIgnore =

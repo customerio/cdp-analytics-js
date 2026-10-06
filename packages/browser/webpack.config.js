@@ -12,6 +12,30 @@ const ASSET_PATH = isProd
   : '/dist/umd/'
 
 const plugins = [
+  {
+    apply(compiler) {
+      compiler.hooks.thisCompilation.tap('WebPushWorker', (compilation) => {
+        compilation.hooks.processAssets.tap(
+          {
+            name: 'WebPushWorker',
+            stage: webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONAL,
+          },
+          () =>
+            compilation.emitAsset(
+              '../cio-webpush-sw.js',
+              new webpack.sources.RawSource(
+                require('fs').readFileSync(
+                  path.resolve(
+                    __dirname,
+                    'src/plugins/web-push-plugin/cio-webpush-sw.js'
+                  )
+                )
+              )
+            )
+        )
+      })
+    },
+  },
   new CompressionPlugin({}),
   new webpack.EnvironmentPlugin({
     ASSET_PATH,
@@ -34,6 +58,10 @@ const config = {
   },
   mode: process.env.NODE_ENV || 'development',
   entry: {
+    'webPushPlugin.min': {
+      import: path.resolve(__dirname, 'src/plugins/web-push-plugin/index.ts'),
+      library: { name: 'CustomerIOWebPush', type: 'umd' },
+    },
     index: {
       import: path.resolve(__dirname, 'src/browser/browser-umd.ts'),
       library: {
