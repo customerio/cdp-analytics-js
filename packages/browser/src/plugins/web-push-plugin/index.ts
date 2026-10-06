@@ -262,15 +262,15 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         throw new Error(
           'Web push would replace an existing service worker. Integrate push handlers into that worker or use a worker in a dedicated scope.'
         )
-      // Remember the current path's owner before switching storage keys, even
-      // when reload reconciliation found an unchanged live subscription.
-      stored()
-      workerUrl = nextWorkerUrl
       url.searchParams.set('track', trackUrl)
       const reg = await navigator.serviceWorker.register(
         url.pathname + url.search
       )
       await activated(reg)
+      // Keep the previous lookup if registration or activation fails. Remember
+      // its owner before switching keys, including unchanged reloads.
+      stored()
+      workerUrl = nextWorkerUrl
       try {
         localStorage.setItem(workerStorageKey, workerUrl)
       } catch {

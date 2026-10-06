@@ -127,6 +127,26 @@ test('allows explicit integration with the existing worker', async () => {
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
+test('a failed worker path change preserves the live subscription lookup', async () => {
+  const s = setup()
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({ endpoint: value.endpoint, userId: 'person' })
+  )
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  await s.load()
+  s.sw.register.mockRejectedValueOnce(new Error('worker fetch failed'))
+  await expect(
+    s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('worker fetch failed')
+  expect(await s.analytics.webPush!.subscription()).toEqual(value)
+  await s.analytics.webPush!.unsubscribe()
+  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
 test('loading is inert, including when explicitly disabled', async () => {
   const s = setup()
   await s.load()

@@ -75,6 +75,11 @@ Device ownership is persisted: reset deletes the previous person's device, and
 identifying another person registers it for them. Unsubscribe turns off the browser
 subscription even when logged out; deletion uses the stored owner when known.
 Per-call worker URLs are persisted so later loads can find the subscription.
+When migrating to another worker path, call `analytics.webPush.unsubscribe()`
+while using the old path before subscribing at the new path. This removes the
+old browser subscription and device record; the host still owns its worker.
+Changing the path directly transfers the device event but leaves the previous
+browser registration/subscription in place.
 
 Copy `node_modules/@customerio/cdp-analytics-browser/dist/cio-webpush-sw.js` to
 `/cio-webpush-sw.js` on your site. Serve it as JavaScript over HTTPS (localhost is
