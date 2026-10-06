@@ -14,6 +14,7 @@ async function metric(data, event) {
     if (!trackUrl || !data.delivery_id || !device_id) return
     await fetch(trackUrl.replace(/\/$/, '') + '/push/events', {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       body: JSON.stringify({
         delivery_id: data.delivery_id,
         device_id,
@@ -36,8 +37,8 @@ self.addEventListener('push', (event) => {
           throw new Error('Expected a JSON object')
       } catch {
         payload = {
-          title: 'Customer.io',
-          body: 'Received a push with an invalid JSON payload.',
+          title: 'Notification',
+          body: 'You have a new notification.',
         }
       }
       const data = {

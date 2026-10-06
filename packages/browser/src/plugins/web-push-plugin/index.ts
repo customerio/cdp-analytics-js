@@ -74,26 +74,48 @@ async function activated(
 export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   let analytics: Analytics
   let workerUrl = settings.serviceWorkerUrl ?? '/cio-webpush-sw.js'
+  const workerStorageKey = `cio-webpush:worker:${
+    new URL(workerUrl, location.href).pathname
+  }`
+  let serviceWorker: ServiceWorkerContainer | undefined
+  type Device = { endpoint: string; userId: string | null }
+  let memory: Device | null = null
   const storageKey = () =>
     `cio-webpush:${new URL(workerUrl, location.href).pathname}`
-  const stored = (): string | null => {
+  const stored = (): Device | null => {
     try {
-      return localStorage.getItem(storageKey())
+      const value = localStorage.getItem(storageKey())
+      if (!value) return memory
+      // Migrate the alpha's endpoint-only records without inventing an owner.
+      if (!value.startsWith('{')) return { endpoint: value, userId: null }
+      return JSON.parse(value) as Device
     } catch {
-      return null
+      return memory
     }
   }
-  const save = (endpoint: string | null): void => {
+  const save = (device: Device | null): void => {
+    memory = device
     try {
-      if (endpoint) localStorage.setItem(storageKey(), endpoint)
+      if (device) localStorage.setItem(storageKey(), JSON.stringify(device))
       else localStorage.removeItem(storageKey())
     } catch {
       /* Persistence is optional in private browsing. */
     }
   }
+  let mutations: Promise<unknown> = Promise.resolve()
+  const mutate = <T>(task: () => Promise<T>): Promise<T> => {
+    const result = mutations.then(task)
+    mutations = result.catch(() => {})
+    return result
+  }
   const pending = new Set<(error?: Error) => void>()
   const identified = () => {
-    if (analytics.user().id()) pending.forEach((finish) => finish())
+    if (analytics.user().id()) {
+      pending.forEach((finish) => finish())
+      const previous = stored()
+      if (previous && previous.userId !== analytics.user().id())
+        background(reconcile())
+    }
   }
   const pagehide = () =>
     pending.forEach((finish) =>
@@ -116,7 +138,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   }
   const registration = async () => {
     supported()
-    const found = await navigator.serviceWorker.getRegistration(workerUrl)
+    const found = await serviceWorker?.getRegistration(workerUrl)
     // Do not operate on an unrelated worker that happens to cover this path.
     const worker = found?.active || found?.waiting || found?.installing
     return worker &&
@@ -127,30 +149,65 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   }
   const live = async () =>
     (await registration())?.pushManager.getSubscription() ?? null
-  const device = (token: string) => ({
+  const device = (token: string, userId?: string) => ({
+    ...(userId ? { userId } : {}),
     context: { device: { token, type: 'web' } },
   })
+  const deleteDevice = async (previous: Device) => {
+    if (previous.userId)
+      await analytics.track(
+        'Device Deleted',
+        {},
+        device(previous.endpoint, previous.userId)
+      )
+  }
+  const reset = () => {
+    background(
+      mutate(async () => {
+        const previous = stored()
+        if (!previous?.userId) return
+        await deleteDevice(previous)
+        save({ endpoint: previous.endpoint, userId: null })
+      })
+    )
+  }
   const registerDevice = async (subscription: PushSubscription) => {
     const value = json(subscription)
     await identity()
-    // Identity can have been reset between resolving the queue and this continuation.
-    if (!analytics.user().id())
-      throw new Error('Web push requires an identified user.')
-    await analytics.track(
-      'Device Created or Updated',
-      {
-        webpush_p256dh: value.keys.p256dh,
-        webpush_auth: value.keys.auth,
-        user_agent: navigator.userAgent,
-      },
-      device(value.endpoint)
-    )
-    save(value.endpoint)
-    return value
+    return mutate(async () => {
+      // Identity may have been reset while this operation was queued.
+      const userId = analytics.user().id()
+      if (!userId) throw new Error('Web push requires an identified user.')
+      const previous = stored()
+      if (
+        previous &&
+        (previous.endpoint !== value.endpoint || previous.userId !== userId)
+      ) {
+        await deleteDevice(previous)
+        save({ endpoint: previous.endpoint, userId: null })
+      }
+      await analytics.track(
+        'Device Created or Updated',
+        {
+          webpush_p256dh: value.keys.p256dh,
+          webpush_auth: value.keys.auth,
+          user_agent: navigator.userAgent,
+        },
+        device(value.endpoint, userId)
+      )
+      save({ endpoint: value.endpoint, userId })
+      return value
+    })
   }
   const reconcile = async (force = false) => {
     const subscription = await live()
-    if (subscription && (force || stored() !== subscription.endpoint))
+    const previous = stored()
+    if (
+      subscription &&
+      (force ||
+        previous?.endpoint !== subscription.endpoint ||
+        previous?.userId !== analytics.user().id())
+    )
       await registerDevice(subscription)
   }
   const background = (task: Promise<unknown>) => {
@@ -192,6 +249,30 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         url.pathname + url.search
       )
       await activated(reg)
+      try {
+        localStorage.setItem(workerStorageKey, workerUrl)
+      } catch {
+        /* Persistence is optional in private browsing. */
+      }
+      const existing = await reg.pushManager.getSubscription()
+      const existingKey = existing?.options?.applicationServerKey
+      if (
+        existing &&
+        (!existingKey ||
+          existingKey.byteLength !== key.byteLength ||
+          new Uint8Array(existingKey).some((byte, i) => byte !== key[i]))
+      ) {
+        if (!(await existing.unsubscribe()))
+          throw new Error('Browser unsubscribe failed.')
+        await mutate(async () => {
+          const previous = stored() ?? {
+            endpoint: existing.endpoint,
+            userId: analytics.user().id() ?? null,
+          }
+          await deleteDevice(previous)
+          save(null)
+        })
+      }
       const subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: key,
@@ -200,21 +281,27 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     },
     unsubscribe: async () => {
       const subscription = await live()
-      const token = subscription?.endpoint ?? stored()
-      if (!token) return
-      await identity()
-      if (!analytics.user().id())
-        throw new Error('Web push requires an identified user.')
       if (subscription && !(await subscription.unsubscribe()))
         throw new Error('Browser unsubscribe failed.')
-      // Retain the token if tracking fails after the browser subscription is gone.
-      save(token)
-      await analytics.track('Device Deleted', {}, device(token))
-      save(null)
+      await mutate(async () => {
+        const previous = stored()
+        const endpoint = previous?.endpoint ?? subscription?.endpoint
+        if (!endpoint) return
+        const owner = previous?.userId ?? analytics.user().id() ?? null
+        // No known owner means no device event was registered to delete.
+        const record = { endpoint, userId: owner }
+        save(record)
+        await deleteDevice(record)
+        save(null)
+      })
     },
     subscription: async () => {
-      const subscription = await live()
-      return subscription ? json(subscription) : null
+      try {
+        const subscription = await live()
+        return subscription ? json(subscription) : null
+      } catch {
+        return null
+      }
     },
   }
   return {
@@ -225,11 +312,22 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     load: (_ctx, instance) => {
       if (settings.enabled === false) return Promise.resolve()
       analytics = instance
+      try {
+        serviceWorker = navigator.serviceWorker
+      } catch {
+        return Promise.resolve()
+      }
+      try {
+        workerUrl = localStorage.getItem(workerStorageKey) ?? workerUrl
+      } catch {
+        /* Persistence is optional in private browsing. */
+      }
       analytics.webPush = api
       analytics.on('identify', identified)
+      analytics.on('reset', reset)
       window.addEventListener('pagehide', pagehide)
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.addEventListener('message', message)
+      if (serviceWorker) {
+        serviceWorker.addEventListener('message', message)
         // Only inspect an existing subscription; loading never registers or prompts.
         if ('PushManager' in window && 'Notification' in window)
           background(reconcile())
@@ -239,9 +337,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     unload: () => {
       pagehide()
       analytics?.off('identify', identified)
+      analytics?.off('reset', reset)
       window.removeEventListener('pagehide', pagehide)
-      if ('serviceWorker' in navigator)
-        navigator.serviceWorker.removeEventListener('message', message)
+      serviceWorker?.removeEventListener('message', message)
       if (analytics?.webPush === api) delete analytics.webPush
       return Promise.resolve()
     },

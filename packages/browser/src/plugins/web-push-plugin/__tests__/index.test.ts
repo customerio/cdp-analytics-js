@@ -95,7 +95,10 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
       webpush_auth: 'auth',
       user_agent: navigator.userAgent,
     },
-    { context: { device: { token: value.endpoint, type: 'web' } } }
+    {
+      userId: 'person',
+      context: { device: { token: value.endpoint, type: 'web' } },
+    }
   )
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
@@ -126,7 +129,10 @@ test('rejects anonymous operations when the page lifetime ends', async () => {
 
 test('returns the live subscription and unsubscribes before tracking deletion', async () => {
   const s = setup()
-  localStorage.setItem('cio-webpush:/cio-webpush-sw.js', value.endpoint)
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({ endpoint: value.endpoint, userId: 'person' })
+  )
   s.manager.getSubscription.mockResolvedValue(s.subscription)
   await s.load()
   expect(await s.analytics.webPush!.subscription()).toEqual(value)
@@ -135,7 +141,10 @@ test('returns the live subscription and unsubscribes before tracking deletion', 
   expect(s.analytics.track).toHaveBeenCalledWith(
     'Device Deleted',
     {},
-    { context: { device: { token: value.endpoint, type: 'web' } } }
+    {
+      userId: 'person',
+      context: { device: { token: value.endpoint, type: 'web' } },
+    }
   )
   expect(s.subscription.unsubscribe.mock.invocationCallOrder[0]).toBeLessThan(
     (s.analytics.track as jest.Mock).mock.invocationCallOrder[0]
@@ -145,20 +154,24 @@ test('returns the live subscription and unsubscribes before tracking deletion', 
 
 test('keeps the deleted endpoint for retry when tracking fails', async () => {
   const s = setup()
-  localStorage.setItem('cio-webpush:/cio-webpush-sw.js', value.endpoint)
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({ endpoint: value.endpoint, userId: 'person' })
+  )
   s.manager.getSubscription.mockResolvedValue(s.subscription)
   await s.load()
   ;(s.analytics.track as jest.Mock).mockRejectedValueOnce(new Error('offline'))
   await expect(s.analytics.webPush!.unsubscribe()).rejects.toThrow('offline')
-  expect(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')).toBe(
-    value.endpoint
-  )
+  expect(
+    JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+  ).toEqual({ endpoint: value.endpoint, userId: 'person' })
   s.manager.getSubscription.mockResolvedValue(null)
   await s.analytics.webPush!.unsubscribe()
   expect(s.analytics.track).toHaveBeenLastCalledWith(
     'Device Deleted',
     {},
     {
+      userId: 'person',
       context: { device: { token: value.endpoint, type: 'web' } },
     }
   )

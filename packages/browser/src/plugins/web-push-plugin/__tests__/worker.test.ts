@@ -30,7 +30,14 @@ function setup() {
   }
   vm.runInNewContext(
     fs.readFileSync(path.join(__dirname, '../cio-webpush-sw.js'), 'utf8'),
-    { self, fetch, URL, Date, console: { warn: jest.fn() } }
+    {
+      self,
+      fetch,
+      URL,
+      Date,
+      AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
+      console: { warn: jest.fn() },
+    }
   )
   const invoke = (name: string, event: any) => {
     let task: Promise<unknown> = Promise.resolve()
@@ -79,6 +86,7 @@ test('push shows the notification, then sends a text-body delivered metric', asy
     'https://track.customer.io/push/events',
     {
       method: 'POST',
+      signal: 'timeout-signal',
       body: JSON.stringify({
         delivery_id: 'delivery',
         device_id: 'endpoint',

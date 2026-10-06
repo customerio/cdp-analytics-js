@@ -36,7 +36,7 @@ const plugins = [
       })
     },
   },
-  new CompressionPlugin({}),
+  new CompressionPlugin({ exclude: /cio-webpush-sw\.js$/ }),
   new webpack.EnvironmentPlugin({
     ASSET_PATH,
   }),
@@ -110,6 +110,7 @@ const config = {
     minimize: isProd,
     minimizer: [
       new TerserPlugin({
+        exclude: /cio-webpush-sw\.js$/,
         extractComments: false,
         terserOptions: {
           ecma: '2015',

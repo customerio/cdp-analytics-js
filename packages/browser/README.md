@@ -71,9 +71,10 @@ browser subscription, but its device registration promise waits for `identify`;
 no anonymous device event is sent. If the page closes (`pagehide`) or the plugin
 is unloaded before identification, that promise rejects with an identity error.
 Catch the promise, and do not rely on unload-time asynchronous work being displayed.
-Changed subscriptions are registered again on the next load, including changes
-while no page was open. Unsubscribe deletes the browser subscription and sends a
-`Device Deleted` event through Pipelines.
+Device ownership is persisted: reset deletes the previous person's device, and
+identifying another person registers it for them. Unsubscribe turns off the browser
+subscription even when logged out; deletion uses the stored owner when known.
+Per-call worker URLs are persisted so later loads can find the subscription.
 
 Copy `node_modules/@customerio/cdp-analytics-browser/dist/cio-webpush-sw.js` to
 `/cio-webpush-sw.js` on your site. Serve it as JavaScript over HTTPS (localhost is
@@ -87,8 +88,15 @@ updating the SDK.
 Safari supports web push on supported macOS versions; iOS/iPadOS 16.4+ requires an
 installed Home Screen web app (with a web app manifest). Request permission from
 a user action. Unsupported browsers or denied permission reject `subscribe`.
-Changing VAPID keys invalidates existing subscriptions: unsubscribe and subscribe
-again with the new key.
+Changing VAPID keys invalidates existing subscriptions. Calling `subscribe` with
+the new key unsubscribes and deletes the old device before registering the new one.
+
+### DEVIATIONS
+
+The worker has no analytics instance: subscription changes are re-sent only via
+an open page or the next load. Reconciliation deletes the stored endpoint before
+registering a replacement. Legacy endpoint-only records have no known owner,
+so their previous person's device cannot be deleted safely.
 
 ### Alpha script demo
 
@@ -96,12 +104,14 @@ With the existing Pipelines analytics snippet already loaded, serve the built
 `packages/browser/dist/umd/webPushPlugin.min.js` at the URL below, and copy
 `packages/browser/dist/cio-webpush-sw.js` to the site root. Replace the placeholders.
 The public write key belongs in the analytics snippet; never include a Track API
-key or a private VAPID key.
+key or a private VAPID key. The public snippet uses `cioanalytics`; if you set
+`data-global-customerio-analytics-key`, use that name instead.
 
 ```html
 <button id="subscribe" disabled>Enable notifications</button>
 <script src="/dist/umd/webPushPlugin.min.js"></script>
 <script>
+  const analytics = window.cioanalytics; // match your snippet's global name
   analytics.ready(async function () {
     try {
       await analytics.register(CustomerIOWebPush.WebPushPlugin({
