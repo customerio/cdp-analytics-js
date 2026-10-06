@@ -81,9 +81,15 @@ Copy `node_modules/@customerio/cdp-analytics-browser/dist/cio-webpush-sw.js` to
 allowed for development), without a redirect. A root worker has root scope. To use
 `/notifications/cio-webpush-sw.js`, pass that path as `serviceWorkerUrl`; its default
 scope is `/notifications/`. Do not overwrite another application's service worker:
-use a dedicated scope or integrate the handlers into your existing worker. The
-worker reads the metrics endpoint from its `?track=` query. Rebuild/copy it when
-updating the SDK.
+use a dedicated scope or integrate the handlers into your existing worker and
+pass that worker's URL. Subscribe rejects a different worker at the same default
+scope before registering or replacing it. The ordinary notification permission
+request still happens from your user action.
+
+The worker reads the metrics endpoint from its `?track=` query. When integrating
+with an existing worker, preserve this query in every host registration call;
+registering the bare URL later drops the endpoint and disables delivered/opened
+metrics. Rebuild/copy the push handlers when updating the SDK.
 
 Safari supports web push on supported macOS versions; iOS/iPadOS 16.4+ requires an
 installed Home Screen web app (with a web app manifest). Request permission from

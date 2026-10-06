@@ -7,7 +7,7 @@ import { createSuccess } from '../../test-helpers/factories'
 jest.mock('unfetch')
 const name = 'Customer.io Web Push Plugin'
 const keyBytes = new Uint8Array([4, ...Array(64).fill(97)])
-const key = btoa(String.fromCharCode(...keyBytes))
+const key = btoa(String.fromCharCode(...Array.from(keyBytes)))
 const loaded: Analytics[] = []
 
 beforeEach(() => {
@@ -266,7 +266,7 @@ test('VAPID rotation unsubscribes and deletes before subscribing with the new ke
   b.manager.subscribe.mockClear()
   const track = jest.spyOn(analytics, 'track')
   await analytics.webPush!.subscribe({
-    vapidPublicKey: btoa(String.fromCharCode(...rotated)),
+    vapidPublicKey: btoa(String.fromCharCode(...Array.from(rotated))),
   })
   expect(b.replacement.unsubscribe).toHaveBeenCalledTimes(1)
   expect(b.manager.subscribe).toHaveBeenCalledWith({
@@ -289,6 +289,38 @@ test('VAPID rotation unsubscribes and deletes before subscribing with the new ke
   )
   track.mockRestore()
   expect(b.manager.subscribe).toHaveBeenCalledTimes(1)
+})
+
+test('changing worker path after reload deletes the persisted subscription owner', async () => {
+  const b = browser()
+  const first = await load()
+  await first.analytics.identify('A')
+  await first.analytics.webPush!.subscribe()
+  await first.analytics.deregister(name)
+  const second = await load()
+  expect((await second.analytics.webPush!.subscription())?.endpoint).toBe(
+    b.replacement.endpoint
+  )
+  expect(second.events).toEqual([])
+  b.manager.subscribe.mockImplementationOnce(async () => {
+    b.setLive(b.initial)
+    return b.initial
+  })
+  await second.analytics.webPush!.subscribe({
+    serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+  })
+  expect(eventShape(second.events)).toEqual([
+    {
+      event: 'Device Deleted',
+      userId: 'A',
+      device: { token: b.replacement.endpoint, type: 'web' },
+    },
+    {
+      event: 'Device Created or Updated',
+      userId: 'A',
+      device: { token: b.initial.endpoint, type: 'web' },
+    },
+  ])
 })
 
 test('worker message deletes the old endpoint before registering its replacement', async () => {

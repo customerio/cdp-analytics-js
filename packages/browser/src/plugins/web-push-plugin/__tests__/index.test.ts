@@ -21,6 +21,7 @@ function setup(userId: string | null = 'person') {
     subscribe: jest.fn().mockResolvedValue(subscription),
   }
   const registration = {
+    scope: 'http://localhost/',
     active: {
       state: 'activated',
       scriptURL: 'http://localhost/cio-webpush-sw.js',
@@ -63,6 +64,68 @@ function setup(userId: string | null = 'person') {
 }
 
 beforeEach(() => localStorage.clear())
+
+test('does not replace an unrelated worker at the requested scope', async () => {
+  const s = setup()
+  s.sw.getRegistration.mockResolvedValue({
+    scope: 'http://localhost/',
+    active: {
+      state: 'activated',
+      scriptURL: 'http://localhost/host-worker.js',
+    },
+    pushManager: s.manager,
+  })
+  await s.load()
+  await expect(s.analytics.webPush!.subscribe()).rejects.toThrow(
+    'existing service worker'
+  )
+  expect(s.sw.register).not.toHaveBeenCalled()
+  expect(s.manager.subscribe).not.toHaveBeenCalled()
+  expect(s.analytics.track).not.toHaveBeenCalled()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('allows a dedicated scope beneath an unrelated root worker', async () => {
+  const s = setup()
+  s.sw.getRegistration.mockResolvedValue({
+    scope: 'http://localhost/',
+    active: {
+      state: 'activated',
+      scriptURL: 'http://localhost/host-worker.js',
+    },
+    pushManager: s.manager,
+  })
+  await s.load()
+  await expect(
+    s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).resolves.toEqual(value)
+  expect(s.sw.register).toHaveBeenCalledWith(
+    '/notifications/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io'
+  )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('allows explicit integration with the existing worker', async () => {
+  const s = setup()
+  s.sw.getRegistration.mockResolvedValue({
+    scope: 'http://localhost/',
+    active: {
+      state: 'activated',
+      scriptURL: 'http://localhost/host-worker.js',
+    },
+    pushManager: s.manager,
+  })
+  await s.load()
+  await expect(
+    s.analytics.webPush!.subscribe({ serviceWorkerUrl: '/host-worker.js' })
+  ).resolves.toEqual(value)
+  expect(s.sw.register).toHaveBeenCalledWith(
+    '/host-worker.js?track=https%3A%2F%2Ftrack.customer.io'
+  )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
 
 test('loading is inert, including when explicitly disabled', async () => {
   const s = setup()
@@ -177,6 +240,38 @@ test('keeps the deleted endpoint for retry when tracking fails', async () => {
   )
   expect(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')).toBeNull()
   await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('keeps a previous owner at the new worker path when deletion fails', async () => {
+  const s = setup()
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({
+      endpoint: 'https://push.example/previous',
+      userId: 'person',
+    })
+  )
+  await s.load()
+  ;(s.analytics.track as jest.Mock).mockRejectedValueOnce(new Error('offline'))
+  await expect(
+    s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('offline')
+  expect(
+    JSON.parse(
+      localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
+    )
+  ).toEqual({ endpoint: 'https://push.example/previous', userId: 'person' })
+  await s.plugin.unload?.(Context.system(), s.analytics)
+
+  const reloaded = setup()
+  await reloaded.load()
+  await reloaded.analytics.webPush!.subscribe()
+  expect(
+    (reloaded.analytics.track as jest.Mock).mock.calls.map(([event]) => event)
+  ).toEqual(['Device Deleted', 'Device Created or Updated'])
+  await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
 })
 
 test('resends a changed endpoint on load and on worker messages', async () => {

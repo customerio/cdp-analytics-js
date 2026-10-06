@@ -87,8 +87,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       const value = localStorage.getItem(storageKey())
       if (!value) return memory
       // Migrate the alpha's endpoint-only records without inventing an owner.
-      if (!value.startsWith('{')) return { endpoint: value, userId: null }
-      return JSON.parse(value) as Device
+      if (!value.startsWith('{'))
+        return (memory = { endpoint: value, userId: null })
+      return (memory = JSON.parse(value) as Device)
     } catch {
       return memory
     }
@@ -183,6 +184,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         previous &&
         (previous.endpoint !== value.endpoint || previous.userId !== userId)
       ) {
+        // A path change may have switched storage keys. Persist the owner at
+        // the current path before deletion so a failed request survives reload.
+        save(previous)
         await deleteDevice(previous)
         save({ endpoint: previous.endpoint, userId: null })
       }
@@ -235,15 +239,33 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         )
       if ((await api.requestPermission()) !== 'granted')
         throw new Error('Notification permission was not granted.')
-      workerUrl = opts.serviceWorkerUrl ?? workerUrl
       const trackUrl =
         settings.trackUrl ??
         (getCDN().includes('cdp-eu.customer.io')
           ? 'https://track-eu.customer.io'
           : 'https://track.customer.io')
-      const url = new URL(workerUrl, location.href)
+      const nextWorkerUrl = opts.serviceWorkerUrl ?? workerUrl
+      const url = new URL(nextWorkerUrl, location.href)
       if (url.origin !== location.origin)
         throw new Error('Web push service worker must be same-origin.')
+      const existingRegistration =
+        await navigator.serviceWorker.getRegistration(url.href)
+      const existingWorker =
+        existingRegistration?.active ||
+        existingRegistration?.waiting ||
+        existingRegistration?.installing
+      if (
+        existingRegistration?.scope === new URL('./', url).href &&
+        existingWorker &&
+        new URL(existingWorker.scriptURL).pathname !== url.pathname
+      )
+        throw new Error(
+          'Web push would replace an existing service worker. Integrate push handlers into that worker or use a worker in a dedicated scope.'
+        )
+      // Remember the current path's owner before switching storage keys, even
+      // when reload reconciliation found an unchanged live subscription.
+      stored()
+      workerUrl = nextWorkerUrl
       url.searchParams.set('track', trackUrl)
       const reg = await navigator.serviceWorker.register(
         url.pathname + url.search
@@ -269,6 +291,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
             endpoint: existing.endpoint,
             userId: analytics.user().id() ?? null,
           }
+          save(previous)
           await deleteDevice(previous)
           save(null)
         })
