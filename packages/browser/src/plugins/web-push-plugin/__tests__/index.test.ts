@@ -190,7 +190,10 @@ test('finishes the first subscription after permission changes from default to g
   const s = setup()
   let permission: NotificationPermission = 'default'
   let allow!: () => void
-  const requestPermission = jest.fn(
+  // Reuse setup's Notification object; a second window.Notification
+  // redefinition is not observed under Node14/jsdom.
+  const requestPermission = Notification.requestPermission as jest.Mock
+  requestPermission.mockImplementationOnce(
     () =>
       new Promise<NotificationPermission>((resolve) => {
         allow = () => {
@@ -199,14 +202,9 @@ test('finishes the first subscription after permission changes from default to g
         }
       })
   )
-  Object.defineProperty(window, 'Notification', {
+  Object.defineProperty(Notification, 'permission', {
     configurable: true,
-    value: {
-      get permission() {
-        return permission
-      },
-      requestPermission,
-    },
+    get: () => permission,
   })
   s.manager.subscribe.mockImplementation(async () => {
     if (Notification.permission !== 'granted')
@@ -241,6 +239,7 @@ test('finishes the first subscription after permission changes from default to g
       context: { device: { token: value.endpoint, type: 'web' } },
     }
   )
+  Reflect.deleteProperty(Notification, 'permission')
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
