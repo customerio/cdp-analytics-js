@@ -80,6 +80,10 @@ while using the old path before subscribing at the new path. This removes the
 old browser subscription and device record; the host still owns its worker.
 Changing the path directly transfers the device event but leaves the previous
 browser registration/subscription in place.
+For a new filename in the same scope, the host must also unregister the old
+worker after unsubscribing, before subscribing with the new URL. The guard
+rejects replacement at that scope even when the old worker previously served
+web push; `unsubscribe()` removes the subscription, not the host's worker.
 
 Copy `node_modules/@customerio/cdp-analytics-browser/dist/cio-webpush-sw.js` to
 `/cio-webpush-sw.js` on your site. Serve it as JavaScript over HTTPS (localhost is
