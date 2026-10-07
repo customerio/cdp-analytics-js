@@ -91,6 +91,45 @@ a user action. Unsupported browsers or denied permission reject `subscribe`.
 Changing VAPID keys invalidates existing subscriptions. Calling `subscribe` with
 the new key unsubscribes and deletes the old device before registering the new one.
 
+### Notification payload
+
+The worker accepts `title`, `body`, optional `image` (large picture), `icon`,
+`badge`, `link` (default click URL), and `actions`:
+
+```json
+{
+  "title": "Your order is ready",
+  "body": "View your order for details.",
+  "image": "https://example.com/order.png",
+  "icon": "https://example.com/icon.png",
+  "badge": "https://example.com/badge.png",
+  "link": "https://example.com/orders",
+  "actions": [
+    {
+      "action": "view",
+      "title": "View order",
+      "url": "https://example.com/orders/123"
+    },
+    { "action": "later", "title": "Later" }
+  ],
+  "CIO-Delivery-ID": "<delivery-id>",
+  "CIO-Delivery-Token": "<subscription-endpoint>"
+}
+```
+
+Use HTTPS URLs for icon, badge, and action destinations. Action IDs must be unique
+and match `[a-z0-9_-]{1,32}`; titles must be nonempty and at most 32 characters.
+The worker drops malformed actions and keeps at most two valid entries. The
+browser decides how many buttons it shows: Chrome supports two; Firefox may show
+none. Image, icon, and badge rendering also depends on the browser and OS.
+Unknown payload fields (including `custom_data`) are not notification options.
+
+An action click opens its `url`, falling back to `link` when omitted; a body click
+opens `link`. Without a link, navigation falls back to `/`. Delivered/opened
+metrics use the delivery ID and subscription endpoint. Action clicks add the
+`action` ID to the opened metric. Navigation never waits for the metrics POST;
+closing a notification sends no metric.
+
 ### DEVIATIONS
 
 The worker has no analytics instance: subscription changes are re-sent only via

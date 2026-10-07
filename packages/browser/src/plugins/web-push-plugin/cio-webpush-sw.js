@@ -6,7 +6,7 @@ self.addEventListener('activate', (event) =>
   event.waitUntil(self.clients.claim())
 )
 
-async function metric(data, event) {
+async function metric(data, event, action) {
   try {
     const device_id =
       data.device_id ||
@@ -19,6 +19,7 @@ async function metric(data, event) {
         delivery_id: data.delivery_id,
         device_id,
         event,
+        ...(action ? { action } : {}),
         timestamp: Math.floor(Date.now() / 1000),
       }),
     })
@@ -41,14 +42,50 @@ self.addEventListener('push', (event) => {
           body: 'You have a new notification.',
         }
       }
+      const actions = []
+      if (Array.isArray(payload.actions)) {
+        for (const entry of payload.actions) {
+          if (
+            !entry ||
+            typeof entry.action !== 'string' ||
+            !/^[a-z0-9_-]{1,32}$/.test(entry.action) ||
+            typeof entry.title !== 'string' ||
+            !entry.title ||
+            entry.title.length > 32 ||
+            actions.some((action) => action.action === entry.action)
+          )
+            continue
+          if (entry.url !== undefined) {
+            try {
+              if (
+                typeof entry.url !== 'string' ||
+                new URL(entry.url).protocol !== 'https:'
+              )
+                continue
+            } catch {
+              continue
+            }
+          }
+          actions.push({
+            action: entry.action,
+            title: entry.title,
+            url: entry.url,
+          })
+          if (actions.length === 2) break
+        }
+      }
       const data = {
         link: payload.link,
+        actions,
         delivery_id: payload['CIO-Delivery-ID'],
         device_id: payload['CIO-Delivery-Token'],
       }
       await self.registration.showNotification(payload.title || 'Customer.io', {
         body: payload.body,
         image: payload.image,
+        icon: payload.icon,
+        badge: payload.badge,
+        actions: actions.map(({ action, title }) => ({ action, title })),
         data,
       })
       await metric(data, 'delivered')
@@ -59,11 +96,14 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const data = event.notification.data || {}
+  const action = Array.isArray(data.actions)
+    ? data.actions.find((entry) => entry && entry.action === event.action)
+    : undefined
   // Start navigation in the click gesture, without waiting for Track or pushManager.
   event.waitUntil(
     Promise.all([
-      metric(data, 'opened'),
-      self.clients.openWindow(data.link || '/'),
+      metric(data, 'opened', event.action),
+      self.clients.openWindow(action?.url || data.link || '/'),
     ])
   )
 })

@@ -5,7 +5,12 @@ import vm from 'vm'
 beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(1700000000000))
 afterEach(() => jest.restoreAllMocks())
 
-function setup() {
+const workers = [
+  path.join(__dirname, '../cio-webpush-sw.js'),
+  path.join(__dirname, '../../../../dist/cio-webpush-sw.js'),
+]
+
+function createWorker(worker: string) {
   const listeners: Record<string, (event: any) => void> = {}
   const fetch = jest.fn().mockResolvedValue({ ok: true })
   const showNotification = jest.fn().mockResolvedValue(undefined)
@@ -28,20 +33,17 @@ function setup() {
       matchAll: jest.fn().mockResolvedValue([{ postMessage }]),
     },
   }
-  vm.runInNewContext(
-    fs.readFileSync(path.join(__dirname, '../cio-webpush-sw.js'), 'utf8'),
-    {
-      self,
-      fetch,
-      URL,
-      Date,
-      AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
-      console: { warn: jest.fn() },
-    }
-  )
+  vm.runInNewContext(fs.readFileSync(worker, 'utf8'), {
+    self,
+    fetch,
+    URL,
+    Date,
+    AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
+    console: { warn: jest.fn() },
+  })
   const invoke = (name: string, event: any) => {
     let task: Promise<unknown> = Promise.resolve()
-    listeners[name]({
+    listeners[name]?.({
       ...event,
       waitUntil: (promise: Promise<unknown>) => {
         task = promise
@@ -59,86 +61,234 @@ function setup() {
   }
 }
 
-test('push shows the notification, then sends a text-body delivered metric', async () => {
-  const s = setup()
-  await s.invoke('push', {
-    data: {
-      json: () => ({
-        title: 'Title',
-        body: 'Body',
-        image: '/image.png',
+test('shipped worker matches the source', () => {
+  expect(fs.readFileSync(workers[1], 'utf8')).toBe(
+    fs.readFileSync(workers[0], 'utf8')
+  )
+})
+
+describe.each(workers)('%s', (workerPath) => {
+  const setup = () => createWorker(workerPath)
+
+  test('push shows the notification, then sends a text-body delivered metric', async () => {
+    const s = setup()
+    await s.invoke('push', {
+      data: {
+        json: () => ({
+          title: 'Title',
+          body: 'Body',
+          image: '/image.png',
+          icon: '/icon.png',
+          badge: '/badge.png',
+          actions: [
+            {
+              action: 'view',
+              title: 'View',
+              url: 'https://example.com/view',
+              unknown: true,
+            },
+            { action: 'later', title: 'Later' },
+            { action: 'third', title: 'Third' },
+          ],
+          custom_data: { ignored: true },
+          unknown: true,
+          link: '/destination',
+          'CIO-Delivery-ID': 'delivery',
+          'CIO-Delivery-Token': 'endpoint',
+        }),
+      },
+    })
+    expect(s.showNotification).toHaveBeenCalledWith('Title', {
+      body: 'Body',
+      image: '/image.png',
+      icon: '/icon.png',
+      badge: '/badge.png',
+      actions: [
+        { action: 'view', title: 'View' },
+        { action: 'later', title: 'Later' },
+      ],
+      data: {
         link: '/destination',
-        'CIO-Delivery-ID': 'delivery',
-        'CIO-Delivery-Token': 'endpoint',
-      }),
-    },
-  })
-  expect(s.showNotification).toHaveBeenCalledWith('Title', {
-    body: 'Body',
-    image: '/image.png',
-    data: {
-      link: '/destination',
-      delivery_id: 'delivery',
-      device_id: 'endpoint',
-    },
-  })
-  expect(s.fetch).toHaveBeenCalledWith(
-    'https://track.customer.io/push/events',
-    {
-      method: 'POST',
-      signal: 'timeout-signal',
-      body: JSON.stringify({
+        actions: [
+          { action: 'view', title: 'View', url: 'https://example.com/view' },
+          { action: 'later', title: 'Later', url: undefined },
+        ],
         delivery_id: 'delivery',
         device_id: 'endpoint',
-        event: 'delivered',
-        timestamp: Math.floor(Date.now() / 1000),
-      }),
+      },
+    })
+    expect(s.fetch).toHaveBeenCalledWith(
+      'https://track.customer.io/push/events',
+      {
+        method: 'POST',
+        signal: 'timeout-signal',
+        body: JSON.stringify({
+          delivery_id: 'delivery',
+          device_id: 'endpoint',
+          event: 'delivered',
+          timestamp: Math.floor(Date.now() / 1000),
+        }),
+      }
+    )
+    expect(s.showNotification.mock.invocationCallOrder[0]).toBeLessThan(
+      s.fetch.mock.invocationCallOrder[0]
+    )
+  })
+
+  test('click navigates even when metrics fail or never settle', async () => {
+    const s = setup()
+    s.fetch.mockRejectedValue(new Error('offline'))
+    const close = jest.fn()
+    await s.invoke('notificationclick', {
+      notification: {
+        close,
+        data: { link: '/destination', delivery_id: 'delivery' },
+      },
+    })
+    expect(close).toHaveBeenCalled()
+    expect(s.openWindow).toHaveBeenCalledWith('/destination')
+    expect(JSON.parse(s.fetch.mock.calls[0][1].body).event).toBe('opened')
+    s.fetch.mockImplementation(() => new Promise(() => {}))
+    void s.invoke('notificationclick', {
+      notification: { close, data: { link: '/slow', delivery_id: 'delivery' } },
+    })
+    expect(s.openWindow).toHaveBeenCalledWith('/slow')
+  })
+
+  test('invalid JSON still shows a notification but sends no incomplete metric', async () => {
+    const s = setup()
+    await s.invoke('push', {
+      data: {
+        json: () => {
+          throw new Error('invalid')
+        },
+      },
+    })
+    expect(s.showNotification).toHaveBeenCalled()
+    expect(s.fetch).not.toHaveBeenCalled()
+  })
+
+  test('subscription change renews using the old key and notifies open pages', async () => {
+    const s = setup()
+    const options = { userVisibleOnly: true, applicationServerKey: 'key' }
+    await s.invoke('pushsubscriptionchange', { oldSubscription: { options } })
+    expect(s.pushManager.subscribe).toHaveBeenCalledWith(options)
+    expect(s.postMessage).toHaveBeenCalledWith({
+      type: 'cio-webpush-subscriptionchange',
+    })
+  })
+
+  test('minimal payload uses only default options and no metrics', async () => {
+    const s = setup()
+    await s.invoke('push', { data: { json: () => ({ title: 'Minimal' }) } })
+    expect(s.showNotification).toHaveBeenCalledWith('Minimal', {
+      body: undefined,
+      image: undefined,
+      icon: undefined,
+      badge: undefined,
+      actions: [],
+      data: {
+        link: undefined,
+        actions: [],
+        delivery_id: undefined,
+        device_id: undefined,
+      },
+    })
+    expect(s.fetch).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    undefined,
+    null,
+    {},
+    'invalid',
+    [
+      null,
+      1,
+      'invalid',
+      {},
+      { action: 1, title: 'Bad' },
+      { action: 'bad', title: 1 },
+      { action: 'bad', title: '' },
+      { action: 'BAD', title: 'Bad' },
+      { action: 'bad', title: 'x'.repeat(33) },
+      { action: 'bad', title: 'Bad', url: 'not a URL' },
+      { action: 'bad', title: 'Bad', url: 'http://example.com' },
+      { action: 'bad', title: 'Bad', url: {} },
+    ],
+  ])('drops malformed actions: %j', async (actions) => {
+    const s = setup()
+    await s.invoke('push', {
+      data: { json: () => ({ title: 'Title', actions }) },
+    })
+    expect(s.showNotification.mock.calls[0][1].actions).toEqual([])
+    expect(s.showNotification.mock.calls[0][1].data.actions).toEqual([])
+  })
+
+  test('invalid and duplicate entries do not displace valid actions', async () => {
+    const s = setup()
+    await s.invoke('push', {
+      data: {
+        json: () => ({
+          actions: [
+            null,
+            { action: 'view', title: 'View' },
+            { action: 'view', title: 'Duplicate' },
+            { action: 'later', title: 'Later' },
+          ],
+        }),
+      },
+    })
+    expect(s.showNotification.mock.calls[0][1].actions).toEqual([
+      { action: 'view', title: 'View' },
+      { action: 'later', title: 'Later' },
+    ])
+  })
+
+  test.each([
+    ['', '/destination'],
+    ['view', 'https://example.com/view'],
+    ['later', '/destination'],
+    ['unknown', '/destination'],
+  ])(
+    'click %s navigates and reports the action without delaying navigation',
+    async (action, url) => {
+      const s = setup()
+      const close = jest.fn()
+      const notification = {
+        close,
+        data: {
+          link: '/destination',
+          delivery_id: 'delivery',
+          actions: [
+            { action: 'view', title: 'View', url: 'https://example.com/view' },
+            { action: 'later', title: 'Later' },
+          ],
+        },
+      }
+      await s.invoke('notificationclick', { action, notification })
+      expect(close).toHaveBeenCalled()
+      expect(s.openWindow).toHaveBeenCalledWith(url)
+      expect(JSON.parse(s.fetch.mock.calls[0][1].body)).toEqual({
+        delivery_id: 'delivery',
+        device_id: 'endpoint',
+        event: 'opened',
+        timestamp: 1700000000,
+        ...(action ? { action } : {}),
+      })
+      s.fetch.mockImplementation(() => new Promise(() => {}))
+      s.openWindow.mockClear()
+      void s.invoke('notificationclick', { action, notification })
+      expect(s.openWindow).toHaveBeenCalledWith(url)
     }
   )
-  expect(s.showNotification.mock.invocationCallOrder[0]).toBeLessThan(
-    s.fetch.mock.invocationCallOrder[0]
-  )
-})
 
-test('click navigates even when metrics fail or never settle', async () => {
-  const s = setup()
-  s.fetch.mockRejectedValue(new Error('offline'))
-  const close = jest.fn()
-  await s.invoke('notificationclick', {
-    notification: {
-      close,
-      data: { link: '/destination', delivery_id: 'delivery' },
-    },
-  })
-  expect(close).toHaveBeenCalled()
-  expect(s.openWindow).toHaveBeenCalledWith('/destination')
-  expect(JSON.parse(s.fetch.mock.calls[0][1].body).event).toBe('opened')
-  s.fetch.mockImplementation(() => new Promise(() => {}))
-  void s.invoke('notificationclick', {
-    notification: { close, data: { link: '/slow', delivery_id: 'delivery' } },
-  })
-  expect(s.openWindow).toHaveBeenCalledWith('/slow')
-})
-
-test('invalid JSON still shows a notification but sends no incomplete metric', async () => {
-  const s = setup()
-  await s.invoke('push', {
-    data: {
-      json: () => {
-        throw new Error('invalid')
-      },
-    },
-  })
-  expect(s.showNotification).toHaveBeenCalled()
-  expect(s.fetch).not.toHaveBeenCalled()
-})
-
-test('subscription change renews using the old key and notifies open pages', async () => {
-  const s = setup()
-  const options = { userVisibleOnly: true, applicationServerKey: 'key' }
-  await s.invoke('pushsubscriptionchange', { oldSubscription: { options } })
-  expect(s.pushManager.subscribe).toHaveBeenCalledWith(options)
-  expect(s.postMessage).toHaveBeenCalledWith({
-    type: 'cio-webpush-subscriptionchange',
+  test('closing a notification makes no network call', async () => {
+    const s = setup()
+    await s.invoke('notificationclose', {
+      notification: { data: { delivery_id: 'delivery' } },
+    })
+    expect(s.fetch).not.toHaveBeenCalled()
+    expect(s.openWindow).not.toHaveBeenCalled()
   })
 })
