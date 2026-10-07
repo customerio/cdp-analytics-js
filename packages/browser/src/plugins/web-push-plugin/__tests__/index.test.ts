@@ -186,6 +186,64 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
+test('finishes the first subscription after permission changes from default to granted', async () => {
+  const s = setup()
+  let permission: NotificationPermission = 'default'
+  let allow!: () => void
+  const requestPermission = jest.fn(
+    () =>
+      new Promise<NotificationPermission>((resolve) => {
+        allow = () => {
+          permission = 'granted'
+          resolve(permission)
+        }
+      })
+  )
+  Object.defineProperty(window, 'Notification', {
+    configurable: true,
+    value: {
+      get permission() {
+        return permission
+      },
+      requestPermission,
+    },
+  })
+  s.manager.subscribe.mockImplementation(async () => {
+    if (Notification.permission !== 'granted')
+      throw new Error('Push subscription requires granted permission.')
+    return s.subscription
+  })
+  await s.load()
+
+  const firstAttempt = s.analytics.webPush!.subscribe()
+  // Mark a premature rejection as handled so the intended assertion reports it.
+  void firstAttempt.catch(() => {})
+  // The native prompt must start synchronously inside the user gesture.
+  expect(requestPermission).toHaveBeenCalledTimes(1)
+  // Let the immediate fake browser calls settle while permission is pending.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(Notification.permission).toBe('default')
+  expect(s.sw.register).not.toHaveBeenCalled()
+  expect(s.manager.subscribe).not.toHaveBeenCalled()
+  expect(s.analytics.track).not.toHaveBeenCalled()
+
+  allow()
+
+  await expect(firstAttempt).resolves.toEqual(value)
+  expect(requestPermission).toHaveBeenCalledTimes(1)
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(s.analytics.track).toHaveBeenCalledTimes(1)
+  expect(s.analytics.track).toHaveBeenCalledWith(
+    'Device Created or Updated',
+    expect.objectContaining({ webpush_p256dh: 'p256dh', webpush_auth: 'auth' }),
+    {
+      userId: 'person',
+      context: { device: { token: value.endpoint, type: 'web' } },
+    }
+  )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
 test('queues anonymous subscription until identify', async () => {
   const s = setup(null)
   await s.load()
