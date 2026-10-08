@@ -99,6 +99,20 @@ self.addEventListener('push', (event) => {
   )
 })
 
+function safeLink(value) {
+  if (typeof value !== 'string' || !value.trim()) return
+  try {
+    const url = new URL(value, self.location.href)
+    if (
+      url.protocol === 'https:' ||
+      (url.protocol === 'http:' && url.origin === self.location.origin)
+    )
+      return value
+  } catch {
+    // A malformed destination is treated like a missing link.
+  }
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const data = event.notification.data || {}
@@ -109,7 +123,9 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     Promise.all([
       metric(data, 'opened', event.action),
-      self.clients.openWindow(action?.url || data.link || '/'),
+      self.clients.openWindow(
+        safeLink(action?.url) || safeLink(data.link) || '/'
+      ),
     ])
   )
 })

@@ -9,7 +9,10 @@ afterEach(() => jest.restoreAllMocks())
 // the emitted copy differs (webpack.config.js), so the source is what's tested.
 const worker = path.join(__dirname, '../cio-webpush-sw.js')
 
-function createWorker(worker: string) {
+function createWorker(
+  worker: string,
+  workerUrl = 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io'
+) {
   const listeners: Record<string, (event: any) => void> = {}
   const fetch = jest.fn().mockResolvedValue({ ok: true })
   const showNotification = jest.fn().mockResolvedValue(undefined)
@@ -21,7 +24,8 @@ function createWorker(worker: string) {
   }
   const self = {
     location: {
-      href: 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io',
+      href: workerUrl,
+      origin: new URL(workerUrl).origin,
     },
     addEventListener: (name: string, fn: (event: any) => void) => {
       listeners[name] = fn
@@ -147,6 +151,77 @@ describe('cio-webpush-sw.js', () => {
     })
     expect(s.openWindow).toHaveBeenCalledWith('/slow')
   })
+
+  test.each([
+    'javascript:alert(1)',
+    'blob:https://example.com/stale-id',
+    'data:text/html,unsafe',
+    'http://other.example/orders',
+    'https://[',
+    { href: 'https://example.com/orders' },
+    123,
+    null,
+    '',
+    '   ',
+  ])('an unsafe body link falls back to the origin root: %j', async (link) => {
+    const s = setup()
+    await s.invoke('notificationclick', {
+      notification: { close: jest.fn(), data: { link } },
+    })
+    expect(s.openWindow).toHaveBeenCalledWith('/')
+  })
+
+  test.each(['https://other.example/orders', '/orders?q=1'])(
+    'a safe body link is passed through unchanged: %s',
+    async (link) => {
+      const s = setup()
+      await s.invoke('notificationclick', {
+        notification: { close: jest.fn(), data: { link } },
+      })
+      expect(s.openWindow).toHaveBeenCalledWith(link)
+    }
+  )
+
+  test('a same-origin HTTP link still works on a local development site', async () => {
+    const s = createWorker(worker, 'http://localhost:8000/cio-webpush-sw.js')
+    const link = 'http://localhost:8000/orders'
+    await s.invoke('notificationclick', {
+      notification: { close: jest.fn(), data: { link } },
+    })
+    expect(s.openWindow).toHaveBeenCalledWith(link)
+  })
+
+  test.each(['http://other.example/orders', '//other.example/orders'])(
+    'a local development worker rejects cross-origin HTTP links: %s',
+    async (link) => {
+      const s = createWorker(worker, 'http://localhost:8000/cio-webpush-sw.js')
+      await s.invoke('notificationclick', {
+        notification: { close: jest.fn(), data: { link } },
+      })
+      expect(s.openWindow).toHaveBeenCalledWith('/')
+    }
+  )
+
+  test.each([
+    ['javascript:alert(1)', '/orders', '/orders'],
+    ['blob:https://example.com/stale-id', '/orders', '/orders'],
+    ['https://[', '/orders', '/orders'],
+    ['http://other.example/orders', '/orders', '/orders'],
+    ['javascript:alert(1)', 'data:text/html,unsafe', '/'],
+  ])(
+    'an unsafe stored button URL %s uses a safe body fallback',
+    async (url, link, destination) => {
+      const s = setup()
+      await s.invoke('notificationclick', {
+        action: 'view',
+        notification: {
+          close: jest.fn(),
+          data: { link, actions: [{ action: 'view', url }] },
+        },
+      })
+      expect(s.openWindow).toHaveBeenCalledWith(destination)
+    }
+  )
 
   test('invalid JSON still shows a notification but sends no incomplete metric', async () => {
     const s = setup()
