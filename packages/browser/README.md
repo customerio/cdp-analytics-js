@@ -118,7 +118,8 @@ The worker accepts `title`, `body`, optional `image` (large picture), `icon`,
 ```
 
 Use HTTPS URLs for icon, badge, and action destinations. Action IDs must be unique
-and match `[a-z0-9_-]{1,32}`; titles are trimmed and must be nonempty and at most
+and match `[a-z0-9_-]{1,32}`; titles are trimmed of Unicode whitespace (including
+U+0085 and U+FEFF) and must be nonempty and at most
 32 Unicode code points (an emoji counts as one), the rule Customer.io applies when
 it saves and sends a message.
 The worker drops malformed actions and keeps at most two valid entries. The

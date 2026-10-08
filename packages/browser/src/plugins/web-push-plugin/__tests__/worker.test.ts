@@ -228,6 +228,9 @@ describe('cio-webpush-sw.js', () => {
     ['👍🏽'.repeat(17), null],
     ['  ' + 'a'.repeat(32) + '  ', 'a'.repeat(32)],
     ['   ', null],
+    ['\uFEFF', null],
+    ['\u0085', null],
+    ['\uFEFF' + 'a'.repeat(32) + '\u0085', 'a'.repeat(32)],
   ])('a label counts code points once trimmed: %j', async (title, shown) => {
     const s = setup()
     await s.invoke('push', {

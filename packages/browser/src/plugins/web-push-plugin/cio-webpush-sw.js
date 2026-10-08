@@ -45,10 +45,13 @@ self.addEventListener('push', (event) => {
       const actions = []
       if (Array.isArray(payload.actions)) {
         for (const entry of payload.actions) {
+          // Customer.io trims the same whitespace (trim() leaves U+0085) and
+          // counts a label's code points, not UTF-16 units, so an emoji is
+          // one of the 32.
           const title =
-            typeof entry?.title === 'string' ? entry.title.trim() : ''
-          // Customer.io counts a label's code points, not UTF-16 units, so
-          // an emoji is one of the 32.
+            typeof entry?.title === 'string'
+              ? entry.title.replace(/^[\s\u0085]+|[\s\u0085]+$/g, '')
+              : ''
           if (
             !entry ||
             typeof entry.action !== 'string' ||
