@@ -323,6 +323,51 @@ test('changing worker path after reload deletes the persisted subscription owner
   ])
 })
 
+test('failed worker path switch keeps the owner for reset after reload', async () => {
+  const b = browser()
+  const first = await load()
+  await first.analytics.identify('A')
+  await first.analytics.webPush!.subscribe()
+  // The new worker registration has no subscription and the browser rejects one.
+  b.manager.getSubscription.mockResolvedValue(null)
+  b.manager.subscribe.mockRejectedValueOnce(
+    new Error('push service unavailable')
+  )
+  await expect(
+    first.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('push service unavailable')
+  expect(b.manager.subscribe).toHaveBeenCalledTimes(2)
+  expect(eventShape(first.events)).toEqual([
+    {
+      event: 'Device Created or Updated',
+      userId: 'A',
+      device: { token: b.replacement.endpoint, type: 'web' },
+    },
+  ])
+  await first.analytics.deregister(name)
+
+  const second = await load()
+  second.analytics.reset()
+  await until(() => second.events.length === 1)
+  expect(b.sw.getRegistration).toHaveBeenCalledWith(
+    '/notifications/cio-webpush-sw.js'
+  )
+  expect(eventShape(second.events)).toEqual([
+    {
+      event: 'Device Deleted',
+      userId: 'A',
+      device: { token: b.replacement.endpoint, type: 'web' },
+    },
+  ])
+  expect(
+    JSON.parse(
+      localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
+    )
+  ).toEqual({ endpoint: b.replacement.endpoint, userId: null })
+})
+
 test('worker message deletes the old endpoint before registering its replacement', async () => {
   const b = browser()
   const { analytics, events } = await load()

@@ -71,15 +71,31 @@ browser subscription, but its device registration promise waits for `identify`;
 no anonymous device event is sent. If the page closes (`pagehide`) or the plugin
 is unloaded before identification, that promise rejects with an identity error.
 Catch the promise, and do not rely on unload-time asynchronous work being displayed.
-Device ownership is persisted: reset deletes the previous person's device, and
-identifying another person registers it for them. Unsubscribe turns off the browser
-subscription even when logged out; deletion uses the stored owner when known.
-Per-call worker URLs are persisted so later loads can find the subscription.
-When migrating to another worker path, call `analytics.webPush.unsubscribe()`
-while using the old path before subscribing at the new path. This removes the
-old browser subscription and device record; the host still owns its worker.
-Changing the path directly transfers the device event but leaves the previous
-browser registration/subscription in place.
+Device ownership is persisted per worker path: reset deletes the device of the
+person stored for the current path, and identifying another person registers it
+for them. Unsubscribe turns off the browser subscription even when logged out;
+deletion uses the stored owner when known.
+Per-call worker URLs are persisted so later loads can find the subscription, as
+long as the `serviceWorkerUrl` load option still names the original path. Where
+`localStorage` is unavailable (for example, some private browsing modes), owners
+and per-call URLs last only for the current page.
+To migrate to another worker path, call `analytics.webPush.unsubscribe()` while
+still using the old path, then subscribe at the new path. This is the recommended
+approach: it removes the old browser subscription and device record; the host
+still owns its worker.
+Passing a new path directly to `subscribe({ serviceWorkerUrl })` is supported
+with limits. If nothing is stored yet for the new path, the old path's stored
+owner is retained there before the new subscription is created; a successful
+subscribe then deletes that device (when its owner is known) and registers the
+new one. If that subscribe fails, a later reload followed by reset can delete
+the retained known owner's device. If the new path already has a stored record,
+that record wins and the old path's device is neither transferred nor deleted,
+so direct migration does not clean up both paths. Subscribe deletes the
+destination record's device only when its endpoint or owner differs; an
+identical endpoint and owner is sent as an update without a delete. In every
+direct case the old browser registration and subscription stay in place.
+Changing the `serviceWorkerUrl` load option itself does not read or migrate the
+old path's stored record; the plugin uses only what is stored for the new path.
 For a new filename in the same scope, the host must also unregister the old
 worker after unsubscribing, before subscribing with the new URL. The guard
 rejects replacement at that scope even when the old worker previously served

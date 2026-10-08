@@ -269,13 +269,23 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       await activated(reg)
       // Keep the previous lookup if registration or activation fails. Remember
       // its owner before switching keys, including unchanged reloads.
-      stored()
+      const carried = stored()
       workerUrl = nextWorkerUrl
       try {
         localStorage.setItem(workerStorageKey, workerUrl)
       } catch {
         /* Persistence is optional in private browsing. */
       }
+      // Durably retain the carried owner under the new lookup before awaiting
+      // the browser, so a reload and reset can still delete it. Never
+      // overwrite a record already present at the destination.
+      let destination: string | null = null
+      try {
+        destination = localStorage.getItem(storageKey())
+      } catch {
+        /* Persistence is optional in private browsing. */
+      }
+      if (carried && !destination) save(carried)
       const existing = await reg.pushManager.getSubscription()
       const existingKey = existing?.options?.applicationServerKey
       if (

@@ -351,6 +351,39 @@ test('keeps a previous owner at the new worker path when deletion fails', async 
   await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
 })
 
+test('a worker path change never overwrites an existing destination owner', async () => {
+  const s = setup()
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({
+      endpoint: 'https://push.example/previous',
+      userId: 'person',
+    })
+  )
+  const destination = JSON.stringify({
+    endpoint: 'https://push.example/other',
+    userId: 'other',
+  })
+  localStorage.setItem(
+    'cio-webpush:/notifications/cio-webpush-sw.js',
+    destination
+  )
+  await s.load()
+  s.manager.subscribe.mockRejectedValueOnce(
+    new Error('push service unavailable')
+  )
+  await expect(
+    s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('push service unavailable')
+  expect(
+    localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
+  ).toBe(destination)
+  expect(s.analytics.track).not.toHaveBeenCalled()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
 test('resends a changed endpoint on load and on worker messages', async () => {
   const s = setup()
   localStorage.setItem('cio-webpush:/cio-webpush-sw.js', 'old-endpoint')
