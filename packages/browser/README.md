@@ -118,7 +118,9 @@ The worker accepts `title`, `body`, optional `image` (large picture), `icon`,
 ```
 
 Use HTTPS URLs for icon, badge, and action destinations. Action IDs must be unique
-and match `[a-z0-9_-]{1,32}`; titles must be nonempty and at most 32 characters.
+and match `[a-z0-9_-]{1,32}`; titles are trimmed and must be nonempty and at most
+32 Unicode code points (an emoji counts as one), the rule Customer.io applies when
+it saves and sends a message.
 The worker drops malformed actions and keeps at most two valid entries. The
 browser decides how many buttons it shows: Chrome supports two; Firefox may show
 none. Image, icon, and badge rendering also depends on the browser and OS.
@@ -173,7 +175,10 @@ key or a private VAPID key. The public snippet uses `cioanalytics`; if you set
 
 `yarn browser+deps build` emits the UMD bundle in `packages/browser/dist/umd/`,
 the static worker in `packages/browser/dist/`, and npm JS/types in
-`packages/browser/dist/{pkg,cjs,types}/`.
+`packages/browser/dist/{pkg,cjs,types}/`. The worker ships unbuilt: `yarn browser
+test` runs its tests on `src/plugins/web-push-plugin/cio-webpush-sw.js`, so it
+needs no build, and the webpack build fails if the `dist/cio-webpush-sw.js` it
+writes differs from that source.
 
 ## Other Regions
 

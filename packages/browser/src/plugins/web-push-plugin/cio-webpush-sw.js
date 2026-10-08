@@ -45,13 +45,16 @@ self.addEventListener('push', (event) => {
       const actions = []
       if (Array.isArray(payload.actions)) {
         for (const entry of payload.actions) {
+          const title =
+            typeof entry?.title === 'string' ? entry.title.trim() : ''
+          // Customer.io counts a label's code points, not UTF-16 units, so
+          // an emoji is one of the 32.
           if (
             !entry ||
             typeof entry.action !== 'string' ||
             !/^[a-z0-9_-]{1,32}$/.test(entry.action) ||
-            typeof entry.title !== 'string' ||
-            !entry.title ||
-            entry.title.length > 32 ||
+            !title ||
+            Array.from(title).length > 32 ||
             actions.some((action) => action.action === entry.action)
           )
             continue
@@ -68,7 +71,7 @@ self.addEventListener('push', (event) => {
           }
           actions.push({
             action: entry.action,
-            title: entry.title,
+            title,
             url: entry.url,
           })
           if (actions.length === 2) break

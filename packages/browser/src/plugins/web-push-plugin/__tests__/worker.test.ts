@@ -5,10 +5,9 @@ import vm from 'vm'
 beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(1700000000000))
 afterEach(() => jest.restoreAllMocks())
 
-const workers = [
-  path.join(__dirname, '../cio-webpush-sw.js'),
-  path.join(__dirname, '../../../../dist/cio-webpush-sw.js'),
-]
+// The build ships this file unchanged as dist/cio-webpush-sw.js and fails if
+// the emitted copy differs (webpack.config.js), so the source is what's tested.
+const worker = path.join(__dirname, '../cio-webpush-sw.js')
 
 function createWorker(worker: string) {
   const listeners: Record<string, (event: any) => void> = {}
@@ -61,14 +60,8 @@ function createWorker(worker: string) {
   }
 }
 
-test('shipped worker matches the source', () => {
-  expect(fs.readFileSync(workers[1], 'utf8')).toBe(
-    fs.readFileSync(workers[0], 'utf8')
-  )
-})
-
-describe.each(workers)('%s', (workerPath) => {
-  const setup = () => createWorker(workerPath)
+describe('cio-webpush-sw.js', () => {
+  const setup = () => createWorker(worker)
 
   test('push shows the notification, then sends a text-body delivered metric', async () => {
     const s = setup()
@@ -223,6 +216,28 @@ describe.each(workers)('%s', (workerPath) => {
     })
     expect(s.showNotification.mock.calls[0][1].actions).toEqual([])
     expect(s.showNotification.mock.calls[0][1].data.actions).toEqual([])
+  })
+
+  // The label boundary cases services and the composer test too.
+  test.each([
+    ['a'.repeat(32), 'a'.repeat(32)],
+    ['a'.repeat(33), null],
+    ['😀'.repeat(32), '😀'.repeat(32)],
+    ['😀'.repeat(33), null],
+    ['👍🏽'.repeat(16), '👍🏽'.repeat(16)],
+    ['👍🏽'.repeat(17), null],
+    ['  ' + 'a'.repeat(32) + '  ', 'a'.repeat(32)],
+    ['   ', null],
+  ])('a label counts code points once trimmed: %j', async (title, shown) => {
+    const s = setup()
+    await s.invoke('push', {
+      data: {
+        json: () => ({ title: 'Title', actions: [{ action: 'view', title }] }),
+      },
+    })
+    expect(s.showNotification.mock.calls[0][1].actions).toEqual(
+      shown === null ? [] : [{ action: 'view', title: shown }]
+    )
   })
 
   test('invalid and duplicate entries do not displace valid actions', async () => {
