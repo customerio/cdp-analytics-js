@@ -159,9 +159,11 @@ none. Image, icon, and badge rendering also depends on the browser and OS.
 Unknown payload fields (including `custom_data`) are not notification options.
 
 An action click opens its `url`, falling back to `link` when omitted; a body click
-opens `link`. Click destinations must resolve to HTTPS or HTTP on the worker's own origin
-(including relative links). An unsafe button URL falls back to the validated
-body link. Missing, malformed, or unsafe body links fall back to `/`. Delivered/opened
+opens `link`. Click destinations must resolve to HTTPS. Relative links resolve
+against the site origin, wherever the worker is installed. An unsafe button URL
+falls back to the validated body link. Missing, malformed, or unsafe body links,
+including any HTTP link, fall back to `/`. On an HTTP development origin such as
+localhost, relative links therefore also open `/`. Delivered/opened
 metrics use the delivery ID and subscription endpoint. Action clicks add the
 `action` ID to the opened metric. Navigation never waits for the metrics POST;
 closing a notification sends no metric.

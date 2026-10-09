@@ -102,12 +102,10 @@ self.addEventListener('push', (event) => {
 function safeLink(value) {
   if (typeof value !== 'string' || !value.trim()) return
   try {
-    const url = new URL(value, self.location.href)
-    if (
-      url.protocol === 'https:' ||
-      (url.protocol === 'http:' && url.origin === self.location.origin)
-    )
-      return value
+    // Resolve against the site origin so the worker's path never changes a
+    // destination, and open only HTTPS URLs.
+    const url = new URL(value, self.location.origin)
+    if (url.protocol === 'https:') return url.href
   } catch {
     // A malformed destination is treated like a missing link.
   }

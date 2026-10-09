@@ -143,13 +143,13 @@ describe('cio-webpush-sw.js', () => {
       },
     })
     expect(close).toHaveBeenCalled()
-    expect(s.openWindow).toHaveBeenCalledWith('/destination')
+    expect(s.openWindow).toHaveBeenCalledWith('https://example.com/destination')
     expect(JSON.parse(s.fetch.mock.calls[0][1].body).event).toBe('opened')
     s.fetch.mockImplementation(() => new Promise(() => {}))
     void s.invoke('notificationclick', {
       notification: { close, data: { link: '/slow', delivery_id: 'delivery' } },
     })
-    expect(s.openWindow).toHaveBeenCalledWith('/slow')
+    expect(s.openWindow).toHaveBeenCalledWith('https://example.com/slow')
   })
 
   test.each([
@@ -171,42 +171,79 @@ describe('cio-webpush-sw.js', () => {
     expect(s.openWindow).toHaveBeenCalledWith('/')
   })
 
-  test.each(['https://other.example/orders', '/orders?q=1'])(
-    'a safe body link is passed through unchanged: %s',
-    async (link) => {
+  test.each([
+    ['https://other.example/orders', 'https://other.example/orders'],
+    ['/orders?q=1', 'https://example.com/orders?q=1'],
+  ])(
+    'a safe body link %s opens its resolved HTTPS URL',
+    async (link, destination) => {
       const s = setup()
       await s.invoke('notificationclick', {
         notification: { close: jest.fn(), data: { link } },
       })
-      expect(s.openWindow).toHaveBeenCalledWith(link)
+      expect(s.openWindow).toHaveBeenCalledWith(destination)
     }
   )
 
-  test('a same-origin HTTP link still works on a local development site', async () => {
-    const s = createWorker(worker, 'http://localhost:8000/cio-webpush-sw.js')
-    const link = 'http://localhost:8000/orders'
-    await s.invoke('notificationclick', {
-      notification: { close: jest.fn(), data: { link } },
-    })
-    expect(s.openWindow).toHaveBeenCalledWith(link)
-  })
+  const nestedWorkerUrl =
+    'https://shop.example/notifications/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io'
 
-  test.each(['http://other.example/orders', '//other.example/orders'])(
-    'a local development worker rejects cross-origin HTTP links: %s',
-    async (link) => {
-      const s = createWorker(worker, 'http://localhost:8000/cio-webpush-sw.js')
+  // Relative links resolve against the site origin, not the worker's path.
+  test.each([
+    ['orders', 'https://shop.example/orders'],
+    ['./orders', 'https://shop.example/orders'],
+    ['../orders', 'https://shop.example/orders'],
+    ['/orders', 'https://shop.example/orders'],
+    ['?q=1', 'https://shop.example/?q=1'],
+    ['#top', 'https://shop.example/#top'],
+  ])(
+    'a nested worker resolves body link %s from the site origin',
+    async (link, destination) => {
+      const s = createWorker(worker, nestedWorkerUrl)
       await s.invoke('notificationclick', {
         notification: { close: jest.fn(), data: { link } },
       })
-      expect(s.openWindow).toHaveBeenCalledWith('/')
+      expect(s.openWindow).toHaveBeenCalledWith(destination)
     }
   )
 
+  test('a nested worker button without a URL uses the resolved body link', async () => {
+    const s = createWorker(worker, nestedWorkerUrl)
+    await s.invoke('notificationclick', {
+      action: 'later',
+      notification: {
+        close: jest.fn(),
+        data: {
+          link: 'orders',
+          actions: [{ action: 'later', title: 'Later' }],
+        },
+      },
+    })
+    expect(s.openWindow).toHaveBeenCalledWith('https://shop.example/orders')
+  })
+
   test.each([
-    ['javascript:alert(1)', '/orders', '/orders'],
-    ['blob:https://example.com/stale-id', '/orders', '/orders'],
-    ['https://[', '/orders', '/orders'],
-    ['http://other.example/orders', '/orders', '/orders'],
+    'http://localhost:8000/orders',
+    '/orders',
+    'http://other.example/orders',
+    '//other.example/orders',
+  ])('an HTTP development worker opens only HTTPS links: %s', async (link) => {
+    const s = createWorker(worker, 'http://localhost:8000/cio-webpush-sw.js')
+    await s.invoke('notificationclick', {
+      notification: { close: jest.fn(), data: { link } },
+    })
+    expect(s.openWindow).toHaveBeenCalledWith('/')
+  })
+
+  test.each([
+    ['javascript:alert(1)', '/orders', 'https://example.com/orders'],
+    [
+      'blob:https://example.com/stale-id',
+      '/orders',
+      'https://example.com/orders',
+    ],
+    ['https://[', '/orders', 'https://example.com/orders'],
+    ['http://other.example/orders', '/orders', 'https://example.com/orders'],
     ['javascript:alert(1)', 'data:text/html,unsafe', '/'],
   ])(
     'an unsafe stored button URL %s uses a safe body fallback',
@@ -339,10 +376,10 @@ describe('cio-webpush-sw.js', () => {
   })
 
   test.each([
-    ['', '/destination'],
+    ['', 'https://example.com/destination'],
     ['view', 'https://example.com/view'],
-    ['later', '/destination'],
-    ['unknown', '/destination'],
+    ['later', 'https://example.com/destination'],
+    ['unknown', 'https://example.com/destination'],
   ])(
     'click %s navigates and reports the action without delaying navigation',
     async (action, url) => {
