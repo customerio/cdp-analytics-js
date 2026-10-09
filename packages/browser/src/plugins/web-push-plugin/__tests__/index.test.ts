@@ -60,10 +60,56 @@ function setup(userId: string | null = 'person') {
     id = 'person'
     listeners.identify()
   }
-  return { analytics, plugin, load, identify, manager, sw, subscription }
+  const reset = () => {
+    id = null
+    listeners.reset()
+  }
+  return { analytics, plugin, load, identify, reset, manager, sw, subscription }
 }
 
 beforeEach(() => localStorage.clear())
+
+test('retains a fallback rotation owner after failed deletion so reload and reset retry', async () => {
+  const s = setup()
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  s.manager.subscribe.mockRejectedValueOnce(
+    new DOMException('different key', 'InvalidStateError')
+  )
+  const track = jest.mocked(s.analytics.track)
+  track.mockRejectedValueOnce(new Error('offline'))
+
+  await expect(s.analytics.webPush!.subscribe()).rejects.toThrow('offline')
+
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  expect(track.mock.calls.map(([event]) => event)).toEqual(['Device Deleted'])
+  expect(
+    JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+  ).toEqual({ endpoint: value.endpoint, userId: 'person' })
+  await s.plugin.unload?.(Context.system(), s.analytics)
+
+  const reloaded = setup()
+  await reloaded.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  reloaded.reset()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(reloaded.analytics.track).toHaveBeenCalledTimes(1)
+  expect(reloaded.analytics.track).toHaveBeenCalledWith(
+    'Device Deleted',
+    {},
+    {
+      userId: 'person',
+      context: { device: { token: value.endpoint, type: 'web' } },
+    }
+  )
+  expect(
+    JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+  ).toEqual({ endpoint: value.endpoint, userId: null })
+  await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+})
 
 test('does not replace an unrelated worker at the requested scope', async () => {
   const s = setup()
