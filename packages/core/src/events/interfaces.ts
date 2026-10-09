@@ -30,7 +30,10 @@ export interface CoreOptions {
   integrations?: Integrations
   timestamp?: Timestamp
   context?: CoreExtraContext
-  anonymousId?: string
+  /**
+   * `null` sends the event without an anonymous id; only honoured when a `userId` is present.
+   */
+  anonymousId?: ID
   userId?: string
   traits?: Traits
   /**

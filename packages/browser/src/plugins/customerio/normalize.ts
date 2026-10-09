@@ -163,7 +163,11 @@ export function normalize(
   referrerId(query, ctx, analytics.options.disableClientPersistence ?? false)
 
   json.userId = json.userId || user.id()
-  json.anonymousId = json.anonymousId || user.anonymousId()
+  // Explicit null with a userId sends the event without an anonymous ID (web
+  // push device deletion). Without a userId it is filled as before, because
+  // ingestion rejects an event with neither.
+  if (!(json.anonymousId === null && json.userId))
+    json.anonymousId = json.anonymousId || user.anonymousId()
 
   json.sentAt = new Date()
 
@@ -200,7 +204,7 @@ export function normalize(
   const bundledConfigIds: string[] = []
 
   bundled.sort().forEach((name) => {
-    ; (configIds[name] ?? []).forEach((id) => {
+    ;(configIds[name] ?? []).forEach((id) => {
       bundledConfigIds.push(id)
     })
   })

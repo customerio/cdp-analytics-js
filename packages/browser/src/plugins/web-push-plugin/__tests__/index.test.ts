@@ -293,6 +293,7 @@ test('retains a fallback rotation owner after failed deletion so reload and rese
     {},
     {
       userId: 'person',
+      anonymousId: null,
       context: { device: { token: value.endpoint, type: 'web' } },
     }
   )
@@ -520,6 +521,7 @@ test('returns the live subscription and unsubscribes before tracking deletion', 
     {},
     {
       userId: 'person',
+      anonymousId: null,
       context: { device: { token: value.endpoint, type: 'web' } },
     }
   )
@@ -549,6 +551,7 @@ test('keeps the deleted endpoint for retry when tracking fails', async () => {
     {},
     {
       userId: 'person',
+      anonymousId: null,
       context: { device: { token: value.endpoint, type: 'web' } },
     }
   )

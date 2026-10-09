@@ -170,10 +170,11 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         {},
         {
           ...device(previous.endpoint, previous.userId),
-          // Delete by the stored owner only. Reset has already generated a new
-          // visitor identity, and overriding it with a string would also mutate
-          // Analytics' current anonymous ID during event normalization.
-          anonymousId: undefined,
+          // Journeys deletes by the stored owner's userId alone. Explicit null
+          // keeps the current visitor's anonymous ID off the previous owner's
+          // event (undefined would be filled during normalization), and a string
+          // would also replace Analytics' current anonymous ID.
+          anonymousId: null,
         }
       )
   }

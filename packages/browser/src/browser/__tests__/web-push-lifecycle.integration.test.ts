@@ -540,6 +540,14 @@ const eventShape = (events: CustomerioEvent[]) =>
     userId: event.userId,
     device: event.context?.device,
   }))
+// Request bodies sent by the real Customer.io destination, after its normalize.
+const sent = (event: string) =>
+  jest
+    .mocked(unfetch)
+    .mock.calls.flatMap(([, init]) =>
+      typeof init?.body === 'string' ? [JSON.parse(init.body)] : []
+    )
+    .filter((body) => body.event === event)
 
 test('identify A → subscribe → reset → identify B deletes A and registers B', async () => {
   browser()
@@ -550,6 +558,11 @@ test('identify A → subscribe → reset → identify B deletes A and registers 
   const anonymousId = analytics.user().anonymousId()
   await analytics.identify('B')
   await until(() => events.length === 3)
+  await until(() => sent('Device Deleted').length === 1)
+  expect(sent('Device Deleted')[0]).toMatchObject({
+    userId: 'A',
+    anonymousId: null,
+  })
   expect(eventShape(events)).toEqual([
     {
       event: 'Device Created or Updated',
@@ -572,9 +585,7 @@ test('identify A → subscribe → reset → identify B deletes A and registers 
     webpush_auth: 'auth',
     user_agent: navigator.userAgent,
   })
-  expect(JSON.parse(JSON.stringify(events[1]))).not.toHaveProperty(
-    'anonymousId'
-  )
+  expect(events[1].anonymousId).toBeNull()
   expect(events[2].anonymousId).toBe(anonymousId)
   expect(analytics.user().anonymousId()).toBe(anonymousId)
   expect(
@@ -609,7 +620,12 @@ test('delayed deletion of a persisted owner never attaches the new visitor ident
   await until(() => events.some((event) => event.event === 'Device Deleted'))
   const deleted = events.find((event) => event.event === 'Device Deleted')!
   expect(deleted.userId).toBe('A')
-  expect(JSON.parse(JSON.stringify(deleted))).not.toHaveProperty('anonymousId')
+  expect(deleted.anonymousId).toBeNull()
+  await until(() => sent('Device Deleted').length === 1)
+  expect(sent('Device Deleted')[0]).toMatchObject({
+    userId: 'A',
+    anonymousId: null,
+  })
   expect(analytics.user().id()).toBe('B')
   expect(analytics.user().anonymousId()).toBe(anonymousId)
   expect(
@@ -623,6 +639,7 @@ test('identity switch without reset also deletes the stored owner', async () => 
   await analytics.identify('A')
   await analytics.webPush!.subscribe()
   await analytics.identify('B')
+  const visitor = analytics.user().anonymousId()
   await until(() => events.length === 3)
   expect(
     eventShape(events).map(({ event, userId }) => [event, userId])
@@ -631,6 +648,35 @@ test('identity switch without reset also deletes the stored owner', async () => 
     ['Device Deleted', 'A'],
     ['Device Created or Updated', 'B'],
   ])
+  await until(() => sent('Device Deleted').length === 1)
+  expect(sent('Device Deleted')[0]).toMatchObject({
+    userId: 'A',
+    anonymousId: null,
+  })
+  expect(analytics.user().anonymousId()).toBe(visitor)
+})
+
+test('a stored record with an anonymous ID still deletes by userId only', async () => {
+  browser()
+  const { analytics } = await load()
+  await analytics.identify('A')
+  await analytics.webPush!.subscribe()
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({
+      endpoint: 'https://push.example/new',
+      userId: 'A',
+      anonymousId: 'stored-anonymous',
+    })
+  )
+  analytics.reset()
+  const visitor = analytics.user().anonymousId()
+  await until(() => sent('Device Deleted').length === 1)
+  expect(sent('Device Deleted')[0]).toMatchObject({
+    userId: 'A',
+    anonymousId: null,
+  })
+  expect(analytics.user().anonymousId()).toBe(visitor)
 })
 
 test('unsubscribe after reset turns off the browser and settles without identify', async () => {
