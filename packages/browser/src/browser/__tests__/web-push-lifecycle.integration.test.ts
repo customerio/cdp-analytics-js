@@ -7,7 +7,7 @@ import { createSuccess } from '../../test-helpers/factories'
 jest.mock('unfetch')
 const name = 'Customer.io Web Push Plugin'
 const keyBytes = new Uint8Array([4, ...Array(64).fill(97)])
-const key = btoa(String.fromCharCode(...keyBytes))
+const key = btoa(String.fromCharCode(...Array.from(keyBytes)))
 const loaded: Analytics[] = []
 
 beforeEach(() => {
@@ -144,6 +144,7 @@ test('identify A → subscribe → reset → identify B deletes A and registers 
   await analytics.identify('A')
   await analytics.webPush!.subscribe()
   analytics.reset()
+  const anonymousId = analytics.user().anonymousId()
   await analytics.identify('B')
   await until(() => events.length === 3)
   expect(eventShape(events)).toEqual([
@@ -168,9 +169,49 @@ test('identify A → subscribe → reset → identify B deletes A and registers 
     webpush_auth: 'auth',
     user_agent: navigator.userAgent,
   })
+  expect(JSON.parse(JSON.stringify(events[1]))).not.toHaveProperty(
+    'anonymousId'
+  )
+  expect(events[2].anonymousId).toBe(anonymousId)
+  expect(analytics.user().anonymousId()).toBe(anonymousId)
   expect(
     JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
   ).toEqual({ endpoint: 'https://push.example/new', userId: 'B' })
+})
+
+test('delayed deletion of a persisted owner never attaches the new visitor identity', async () => {
+  browser()
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({ endpoint: 'https://push.example/old', userId: 'A' })
+  )
+  const { analytics, events } = await load()
+  let release!: () => void
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const track = analytics.track.bind(analytics)
+  jest
+    .spyOn(analytics, 'track')
+    .mockImplementation((...args) =>
+      args[0] === 'Device Deleted'
+        ? delayed.then(() => track(...args))
+        : track(...args)
+    )
+  analytics.reset()
+  const anonymousId = analytics.user().anonymousId()
+  await analytics.identify('B')
+  await analytics.track('New visitor action')
+  release()
+  await until(() => events.some((event) => event.event === 'Device Deleted'))
+  const deleted = events.find((event) => event.event === 'Device Deleted')!
+  expect(deleted.userId).toBe('A')
+  expect(JSON.parse(JSON.stringify(deleted))).not.toHaveProperty('anonymousId')
+  expect(analytics.user().id()).toBe('B')
+  expect(analytics.user().anonymousId()).toBe(anonymousId)
+  expect(
+    events.find((event) => event.event === 'New visitor action')!.anonymousId
+  ).toBe(anonymousId)
 })
 
 test('identity switch without reset also deletes the stored owner', async () => {
@@ -266,7 +307,7 @@ test('VAPID rotation unsubscribes and deletes before subscribing with the new ke
   b.manager.subscribe.mockClear()
   const track = jest.spyOn(analytics, 'track')
   await analytics.webPush!.subscribe({
-    vapidPublicKey: btoa(String.fromCharCode(...rotated)),
+    vapidPublicKey: btoa(String.fromCharCode(...Array.from(rotated))),
   })
   expect(b.replacement.unsubscribe).toHaveBeenCalledTimes(1)
   expect(b.manager.subscribe).toHaveBeenCalledWith({
