@@ -244,7 +244,7 @@ test.each(['identify without reset', 'lookup after reload', 'unsubscribe'])(
     if (operation === 'identify without reset') {
       await first.analytics.identify('B')
       await until(() => first.events.length >= 3)
-      // Rollback and identify can both reconcile; an extra B upsert is idempotent.
+      // Rollback and identify can both reconcile; an extra B upsert is allowed.
       expect(eventShape(first.events).slice(1, 3)).toEqual([
         {
           event: 'Device Deleted',
