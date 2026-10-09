@@ -14,6 +14,9 @@ function sleep(timeoutInMs: number): Promise<void> {
 
 function noop() { }
 
+// New prefixed API keys: {ak|wk}_{us|eu}_..., where us/eu is the data center.
+const PREFIXED_KEY_REGEX = /^(ak|wk)_(us|eu)_/
+
 interface PendingItem {
   resolver: (ctx: Context) => void
   context: Context
@@ -60,11 +63,15 @@ export class Publisher {
     this._maxRetries = maxRetries
     this._maxEventsInBatch = Math.max(maxEventsInBatch, 1)
     this._flushInterval = flushInterval
-    this._auth = b64encode(`${writeKey}:`)
-    this._url = tryCreateFormattedUrl(
-      host ?? 'https://cdp.customer.io',
-      path ?? '/v1/batch'
-    )
+    const prefixedKey = PREFIXED_KEY_REGEX.exec(writeKey)
+    this._auth = prefixedKey
+      ? `Bearer ${writeKey}`
+      : `Basic ${b64encode(`${writeKey}:`)}`
+    const defaultHost =
+      prefixedKey?.[2] === 'eu'
+        ? 'https://cdp-eu.customer.io'
+        : 'https://cdp.customer.io'
+    this._url = tryCreateFormattedUrl(host ?? defaultHost, path ?? '/v1/batch')
     this._httpRequestTimeout = httpRequestTimeout ?? 10000
   }
 
@@ -196,7 +203,7 @@ export class Publisher {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Basic ${this._auth}`,
+            Authorization: this._auth,
             'User-Agent': 'cdp-analytics-node/latest',
           },
           body: payload,
