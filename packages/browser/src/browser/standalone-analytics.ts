@@ -1,5 +1,6 @@
 import { AnalyticsBrowser } from '.'
 import { embeddedWriteKey } from '../lib/embedded-write-key'
+import { isSecretKey, SECRET_KEY_ERROR } from '../lib/secret-key'
 import { AnalyticsSnippet } from './standalone-interface'
 import {
   getGlobalAnalytics,
@@ -53,6 +54,11 @@ export async function install(): Promise<void> {
     console.error(
       'Failed to load Write Key. Make sure to use the latest version of the snippet, which can be found in your source settings.'
     )
+    return
+  }
+
+  if (isSecretKey(writeKey)) {
+    console.error(SECRET_KEY_ERROR)
     return
   }
 

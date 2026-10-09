@@ -91,6 +91,32 @@ beforeEach(() => {
   setGlobalCDNUrl(undefined as any)
 })
 
+describe('Secret keys', () => {
+  beforeEach(() => {
+    fetchCalls = []
+  })
+
+  it('rejects ak_ keys before any request', async () => {
+    await expect(
+      AnalyticsBrowser.load({ writeKey: 'ak_us_secret' })
+    ).rejects.toThrow('Use your public key in the browser')
+
+    expect(fetchCalls.length).toBe(0)
+  })
+
+  it('loads and tracks with wk_ keys', async () => {
+    const [analytics] = await AnalyticsBrowser.load({
+      writeKey: 'wk_us_public',
+      plugins: [xt],
+    })
+
+    const ctx = await analytics.track('Hello')
+
+    expect(ctx.event.event).toBe('Hello')
+    expect(fetchCalls[0].url).toContain('wk_us_public')
+  })
+})
+
 describe.skip('Initialization', () => {
   beforeEach(async () => {
     fetchCalls = []
