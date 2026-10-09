@@ -1,10 +1,22 @@
 'use strict'
+// Customer.io web push service worker. Register this file directly; the web
+// push plugin does, adding `?track=` for delivered and opened metrics.
+//
+// Importing it into your own worker with importScripts is supported only if
+// your worker supplies its own lifecycle (skipWaiting, clients.claim) and sets
+// `self.cioWebPushLifecycle = false` before the import. An imported copy reads
+// `track` from your worker's URL, so it has no track URL, and sends no metrics,
+// unless your worker is registered with one.
 const trackUrl = new URL(self.location.href).searchParams.get('track')
 
-self.addEventListener('install', (event) => event.waitUntil(self.skipWaiting()))
-self.addEventListener('activate', (event) =>
-  event.waitUntil(self.clients.claim())
-)
+if (self.cioWebPushLifecycle !== false) {
+  self.addEventListener('install', (event) =>
+    event.waitUntil(self.skipWaiting())
+  )
+  self.addEventListener('activate', (event) =>
+    event.waitUntil(self.clients.claim())
+  )
+}
 
 function owned(deliveryId, deviceId) {
   return (

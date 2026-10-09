@@ -11,7 +11,8 @@ const worker = path.join(__dirname, '../cio-webpush-sw.js')
 
 function createWorker(
   worker: string,
-  workerUrl = 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io'
+  workerUrl = 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io',
+  globals: Record<string, unknown> = {}
 ) {
   const listeners: Record<string, (event: any) => void> = {}
   const fetch = jest.fn().mockResolvedValue({ ok: true })
@@ -22,7 +23,11 @@ function createWorker(
     getSubscription: jest.fn().mockResolvedValue({ endpoint: 'endpoint' }),
     subscribe: jest.fn().mockResolvedValue({}),
   }
+  const skipWaiting = jest.fn().mockResolvedValue(undefined)
+  const claim = jest.fn().mockResolvedValue(undefined)
   const self = {
+    ...globals,
+    skipWaiting,
     location: {
       href: workerUrl,
       origin: new URL(workerUrl).origin,
@@ -32,6 +37,7 @@ function createWorker(
     },
     registration: { showNotification, pushManager },
     clients: {
+      claim,
       openWindow,
       matchAll: jest.fn().mockResolvedValue([{ postMessage }]),
     },
@@ -56,6 +62,8 @@ function createWorker(
   }
   return {
     invoke,
+    skipWaiting,
+    claim,
     fetch,
     showNotification,
     openWindow,
@@ -71,6 +79,29 @@ describe('cio-webpush-sw.js', () => {
     'CIO-Delivery-Token': 'endpoint',
   }
   const notificationMarkers = { delivery_id: 'delivery', device_id: 'endpoint' }
+
+  test('install and activate take over the page by default', async () => {
+    const s = setup()
+    await s.invoke('install', {})
+    await s.invoke('activate', {})
+    expect(s.skipWaiting).toHaveBeenCalledTimes(1)
+    expect(s.claim).toHaveBeenCalledTimes(1)
+  })
+
+  test('an importing host opts out of the lifecycle and keeps push handling', async () => {
+    const s = createWorker(worker, undefined, { cioWebPushLifecycle: false })
+    await s.invoke('install', {})
+    await s.invoke('activate', {})
+    expect(s.skipWaiting).not.toHaveBeenCalled()
+    expect(s.claim).not.toHaveBeenCalled()
+    await s.invoke('push', {
+      data: { json: () => ({ ...relayMarkers, title: 'Imported' }) },
+    })
+    expect(s.showNotification).toHaveBeenCalledWith(
+      'Imported',
+      expect.anything()
+    )
+  })
 
   test('push shows the notification, then sends a text-body delivered metric', async () => {
     const s = setup()
