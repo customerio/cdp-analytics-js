@@ -21,9 +21,11 @@ function setup(userId: string | null = 'person') {
     subscribe: jest.fn().mockResolvedValue(subscription),
   }
   const registration: {
+    scope: string
     active: { state: string; scriptURL: string } | null
     pushManager: typeof manager
   } = {
+    scope: 'http://localhost/',
     active: {
       state: 'activated',
       scriptURL: 'http://localhost/cio-webpush-sw.js',
@@ -62,11 +64,16 @@ function setup(userId: string | null = 'person') {
     id = 'person'
     listeners.identify()
   }
+  const reset = () => {
+    id = null
+    listeners.reset()
+  }
   return {
     analytics,
     plugin,
     load,
     identify,
+    reset,
     manager,
     registration,
     sw,
@@ -253,6 +260,130 @@ test('keeps the owner when fallback browser unsubscribe fails', async () => {
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
+test('retains a fallback rotation owner after failed deletion so reload and reset retry', async () => {
+  const s = setup()
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  s.manager.subscribe.mockRejectedValueOnce(
+    new DOMException('different key', 'InvalidStateError')
+  )
+  const track = jest.mocked(s.analytics.track)
+  track.mockRejectedValueOnce(new Error('offline'))
+
+  await expect(s.analytics.webPush!.subscribe()).rejects.toThrow('offline')
+
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  expect(track.mock.calls.map(([event]) => event)).toEqual(['Device Deleted'])
+  expect(
+    JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+  ).toEqual({ endpoint: value.endpoint, userId: 'person' })
+  await s.plugin.unload?.(Context.system(), s.analytics)
+
+  const reloaded = setup()
+  await reloaded.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  reloaded.reset()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(reloaded.analytics.track).toHaveBeenCalledTimes(1)
+  expect(reloaded.analytics.track).toHaveBeenCalledWith(
+    'Device Deleted',
+    {},
+    {
+      userId: 'person',
+      context: { device: { token: value.endpoint, type: 'web' } },
+    }
+  )
+  expect(
+    JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+  ).toEqual({ endpoint: value.endpoint, userId: null })
+  await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+})
+
+test('does not replace an unrelated worker at the requested scope', async () => {
+  const s = setup()
+  s.sw.getRegistration.mockResolvedValue({
+    scope: 'http://localhost/',
+    active: {
+      state: 'activated',
+      scriptURL: 'http://localhost/host-worker.js',
+    },
+    pushManager: s.manager,
+  })
+  await s.load()
+  await expect(s.analytics.webPush!.subscribe()).rejects.toThrow(
+    'existing service worker'
+  )
+  expect(s.sw.register).not.toHaveBeenCalled()
+  expect(s.manager.subscribe).not.toHaveBeenCalled()
+  expect(s.analytics.track).not.toHaveBeenCalled()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('allows a dedicated scope beneath an unrelated root worker', async () => {
+  const s = setup()
+  s.sw.getRegistration.mockResolvedValue({
+    scope: 'http://localhost/',
+    active: {
+      state: 'activated',
+      scriptURL: 'http://localhost/host-worker.js',
+    },
+    pushManager: s.manager,
+  })
+  await s.load()
+  await expect(
+    s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).resolves.toEqual(value)
+  expect(s.sw.register).toHaveBeenCalledWith(
+    '/notifications/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io'
+  )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('allows explicit integration with the existing worker', async () => {
+  const s = setup()
+  s.sw.getRegistration.mockResolvedValue({
+    scope: 'http://localhost/',
+    active: {
+      state: 'activated',
+      scriptURL: 'http://localhost/host-worker.js',
+    },
+    pushManager: s.manager,
+  })
+  await s.load()
+  await expect(
+    s.analytics.webPush!.subscribe({ serviceWorkerUrl: '/host-worker.js' })
+  ).resolves.toEqual(value)
+  expect(s.sw.register).toHaveBeenCalledWith(
+    '/host-worker.js?track=https%3A%2F%2Ftrack.customer.io'
+  )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('a failed worker path change preserves the live subscription lookup', async () => {
+  const s = setup()
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({ endpoint: value.endpoint, userId: 'person' })
+  )
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  await s.load()
+  s.sw.register.mockRejectedValueOnce(new Error('worker fetch failed'))
+  await expect(
+    s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('worker fetch failed')
+  expect(await s.analytics.webPush!.subscription()).toEqual(value)
+  await s.analytics.webPush!.unsubscribe()
+  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
 test('loading is inert, including when explicitly disabled', async () => {
   const s = setup()
   await s.load()
@@ -289,6 +420,63 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
       context: { device: { token: value.endpoint, type: 'web' } },
     }
   )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('finishes the first subscription after permission changes from default to granted', async () => {
+  const s = setup()
+  let permission: NotificationPermission = 'default'
+  let allow!: () => void
+  // Reuse setup's Notification object; a second window.Notification
+  // redefinition is not observed under Node14/jsdom.
+  const requestPermission = Notification.requestPermission as jest.Mock
+  requestPermission.mockImplementationOnce(
+    () =>
+      new Promise<NotificationPermission>((resolve) => {
+        allow = () => {
+          permission = 'granted'
+          resolve(permission)
+        }
+      })
+  )
+  Object.defineProperty(Notification, 'permission', {
+    configurable: true,
+    get: () => permission,
+  })
+  s.manager.subscribe.mockImplementation(async () => {
+    if (Notification.permission !== 'granted')
+      throw new Error('Push subscription requires granted permission.')
+    return s.subscription
+  })
+  await s.load()
+
+  const firstAttempt = s.analytics.webPush!.subscribe()
+  // Mark a premature rejection as handled so the intended assertion reports it.
+  void firstAttempt.catch(() => {})
+  // The native prompt must start synchronously inside the user gesture.
+  expect(requestPermission).toHaveBeenCalledTimes(1)
+  // Let the immediate fake browser calls settle while permission is pending.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(Notification.permission).toBe('default')
+  expect(s.sw.register).not.toHaveBeenCalled()
+  expect(s.manager.subscribe).not.toHaveBeenCalled()
+  expect(s.analytics.track).not.toHaveBeenCalled()
+
+  allow()
+
+  await expect(firstAttempt).resolves.toEqual(value)
+  expect(requestPermission).toHaveBeenCalledTimes(1)
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(s.analytics.track).toHaveBeenCalledTimes(1)
+  expect(s.analytics.track).toHaveBeenCalledWith(
+    'Device Created or Updated',
+    expect.objectContaining({ webpush_p256dh: 'p256dh', webpush_auth: 'auth' }),
+    {
+      userId: 'person',
+      context: { device: { token: value.endpoint, type: 'web' } },
+    }
+  )
+  Reflect.deleteProperty(Notification, 'permission')
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
@@ -365,6 +553,71 @@ test('keeps the deleted endpoint for retry when tracking fails', async () => {
     }
   )
   expect(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')).toBeNull()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('keeps a previous owner at the new worker path when deletion fails', async () => {
+  const s = setup()
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({
+      endpoint: 'https://push.example/previous',
+      userId: 'person',
+    })
+  )
+  await s.load()
+  ;(s.analytics.track as jest.Mock).mockRejectedValueOnce(new Error('offline'))
+  await expect(
+    s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('offline')
+  expect(
+    JSON.parse(
+      localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
+    )
+  ).toEqual({ endpoint: 'https://push.example/previous', userId: 'person' })
+  await s.plugin.unload?.(Context.system(), s.analytics)
+
+  const reloaded = setup()
+  await reloaded.load()
+  await reloaded.analytics.webPush!.subscribe()
+  expect(
+    (reloaded.analytics.track as jest.Mock).mock.calls.map(([event]) => event)
+  ).toEqual(['Device Deleted', 'Device Created or Updated'])
+  await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+})
+
+test('a worker path change never overwrites an existing destination owner', async () => {
+  const s = setup()
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({
+      endpoint: 'https://push.example/previous',
+      userId: 'person',
+    })
+  )
+  const destination = JSON.stringify({
+    endpoint: 'https://push.example/other',
+    userId: 'other',
+  })
+  localStorage.setItem(
+    'cio-webpush:/notifications/cio-webpush-sw.js',
+    destination
+  )
+  await s.load()
+  s.manager.subscribe.mockRejectedValueOnce(
+    new Error('push service unavailable')
+  )
+  await expect(
+    s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('push service unavailable')
+  expect(
+    localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
+  ).toBe(destination)
+  expect(s.analytics.track).not.toHaveBeenCalled()
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 

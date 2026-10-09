@@ -1,3 +1,4 @@
+const fs = require('fs')
 const path = require('path')
 const webpack = require('webpack')
 const TerserPlugin = require('terser-webpack-plugin')
@@ -11,6 +12,11 @@ const ASSET_PATH = isProd
   ? 'https://cdp.customer.io/v1/analytics-js/'
   : '/dist/umd/'
 
+const webPushWorker = path.resolve(
+  __dirname,
+  'src/plugins/web-push-plugin/cio-webpush-sw.js'
+)
+
 const plugins = [
   {
     apply(compiler) {
@@ -23,16 +29,24 @@ const plugins = [
           () =>
             compilation.emitAsset(
               '../cio-webpush-sw.js',
-              new webpack.sources.RawSource(
-                require('fs').readFileSync(
-                  path.resolve(
-                    __dirname,
-                    'src/plugins/web-push-plugin/cio-webpush-sw.js'
-                  )
-                )
-              )
+              new webpack.sources.RawSource(fs.readFileSync(webPushWorker))
             )
         )
+      })
+      // The worker's tests run on its source, so the shipped copy must be
+      // that source byte for byte (no minifier or other transform).
+      compiler.hooks.afterEmit.tap('WebPushWorker', (compilation) => {
+        const shipped = path.resolve(
+          compilation.outputOptions.path,
+          '../cio-webpush-sw.js'
+        )
+        if (!fs.readFileSync(shipped).equals(fs.readFileSync(webPushWorker))) {
+          compilation.errors.push(
+            new webpack.WebpackError(
+              `${shipped} differs from ${webPushWorker}; it must ship unchanged`
+            )
+          )
+        }
       })
     },
   },

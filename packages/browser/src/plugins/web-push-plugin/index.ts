@@ -95,8 +95,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       const value = localStorage.getItem(storageKey())
       if (!value) return memory
       // Migrate the alpha's endpoint-only records without inventing an owner.
-      if (!value.startsWith('{')) return { endpoint: value, userId: null }
-      return JSON.parse(value) as Device
+      if (!value.startsWith('{'))
+        return (memory = { endpoint: value, userId: null })
+      return (memory = JSON.parse(value) as Device)
     } catch {
       return memory
     }
@@ -111,6 +112,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     }
   }
   let mutations: Promise<unknown> = Promise.resolve()
+  let selections = 0
   const mutate = <T>(task: () => Promise<T>): Promise<T> => {
     const result = mutations.then(task)
     mutations = result.catch(() => {})
@@ -197,6 +199,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         previous &&
         (previous.endpoint !== value.endpoint || previous.userId !== userId)
       ) {
+        // A path change may have switched storage keys. Persist the owner at
+        // the current path before deletion so a failed request survives reload.
+        save(previous)
         await deleteDevice(previous)
         save({ endpoint: previous.endpoint, userId: null })
       }
@@ -249,28 +254,89 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         )
       if ((await api.requestPermission()) !== 'granted')
         throw new Error('Notification permission was not granted.')
-      workerUrl = opts.serviceWorkerUrl ?? workerUrl
       const trackUrl =
         settings.trackUrl ??
         (getCDN().includes('cdp-eu.customer.io')
           ? 'https://track-eu.customer.io'
           : 'https://track.customer.io')
-      const url = new URL(workerUrl, location.href)
+      const nextWorkerUrl = opts.serviceWorkerUrl ?? workerUrl
+      const url = new URL(nextWorkerUrl, location.href)
       if (url.origin !== location.origin)
         throw new Error('Web push service worker must be same-origin.')
+      const existingRegistration =
+        await navigator.serviceWorker.getRegistration(url.href)
+      const existingWorker =
+        existingRegistration?.active ||
+        existingRegistration?.waiting ||
+        existingRegistration?.installing
+      if (
+        existingRegistration?.scope === new URL('./', url).href &&
+        existingWorker &&
+        new URL(existingWorker.scriptURL).pathname !== url.pathname
+      )
+        throw new Error(
+          'Web push would replace an existing service worker. Integrate push handlers into that worker or use a worker in a dedicated scope.'
+        )
       url.searchParams.set('track', trackUrl)
       const reg = await navigator.serviceWorker.register(
         url.pathname + url.search
       )
       await activated(reg)
+      // Read the destination before selecting it. The read changes nothing in
+      // the browser, so a failed lookup leaves the previous path selected.
+      const existing = await reg.pushManager.getSubscription()
+      // A browser may not expose an existing subscription's key: unknown, not a mismatch.
+      const existingKey = existing?.options?.applicationServerKey ?? null
+      // Remember the previous selection and owner, then switch keys without
+      // awaiting, including unchanged reloads.
+      const previousWorkerUrl = workerUrl
+      const sourceKey = storageKey()
+      let previousSelection: string | null = null
+      try {
+        previousSelection = localStorage.getItem(workerStorageKey)
+      } catch {
+        /* Persistence is optional in private browsing. */
+      }
+      const carried = stored()
+      workerUrl = nextWorkerUrl
+      const destinationKey = storageKey()
+      // Every subscribe that selects a path advances this, so a stale failure
+      // never undoes a later selection at the same or another path.
+      const selection = ++selections
       try {
         localStorage.setItem(workerStorageKey, workerUrl)
       } catch {
         /* Persistence is optional in private browsing. */
       }
-      const existing = await reg.pushManager.getSubscription()
-      // A browser may not expose an existing subscription's key: unknown, not a mismatch.
-      const existingKey = existing?.options?.applicationServerKey ?? null
+      // Durably retain the carried owner under the new lookup before awaiting
+      // the browser, so a reload after an interrupted switch can still delete
+      // it. Never overwrite a record already present at the destination.
+      let destination: string | null = null
+      try {
+        destination = localStorage.getItem(destinationKey)
+      } catch {
+        /* Persistence is optional in private browsing. */
+      }
+      const copied = carried && !destination ? JSON.stringify(carried) : null
+      if (carried && !destination) save(carried)
+      // The browser had no subscription at the new path and created none:
+      // restore the previous selection so subscription, unsubscribe, identify
+      // and reset still reach the previous path's subscription and owner.
+      const rollback = () => {
+        if (destinationKey === sourceKey || selection !== selections) return
+        try {
+          if (copied && localStorage.getItem(destinationKey) === copied)
+            localStorage.removeItem(destinationKey)
+          if (previousSelection === null)
+            localStorage.removeItem(workerStorageKey)
+          else localStorage.setItem(workerStorageKey, previousSelection)
+        } catch {
+          /* Persistence is optional in private browsing. */
+        }
+        workerUrl = previousWorkerUrl
+        // Identity may have changed while the new path was selected.
+        if (analytics.user().id()) background(reconcile())
+      }
       const rotate = async (current: PushSubscription) => {
         if (!(await current.unsubscribe()))
           throw new Error('Browser unsubscribe failed.')
@@ -279,6 +345,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
             endpoint: current.endpoint,
             userId: analytics.user().id() ?? null,
           }
+          save(previous)
           await deleteDevice(previous)
           save(null)
         })
@@ -290,6 +357,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       try {
         subscription = await reg.pushManager.subscribe(options)
       } catch (error) {
+        if (!existing) rollback()
         // The browser reuses a matching subscription and rejects a different key
         // with InvalidStateError. It uses that error when the worker is gone too,
         // so rotate only while this registration's worker is still active.

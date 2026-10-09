@@ -124,6 +124,409 @@ async function load() {
   return { analytics, events }
 }
 
+// Each registered scope retains its own browser subscription.
+function scopedBrowser() {
+  const createRegistration = (
+    path: string,
+    scope: string,
+    endpoint: string
+  ) => {
+    let subscribed = false
+    const value = { endpoint, keys: { p256dh: 'p256dh', auth: 'auth' } }
+    const subscription = {
+      endpoint,
+      options: { applicationServerKey: keyBytes.buffer },
+      toJSON: () => value,
+      unsubscribe: jest.fn(async () => {
+        subscribed = false
+        return true
+      }),
+    }
+    const manager = {
+      getSubscription: jest.fn(async () => (subscribed ? subscription : null)),
+      subscribe: jest.fn(async () => {
+        subscribed = true
+        return subscription
+      }),
+    }
+    return {
+      value,
+      subscription,
+      manager,
+      registration: {
+        scope: new URL(scope, location.href).href,
+        active: {
+          state: 'activated',
+          scriptURL: new URL(path, location.href).href,
+        },
+        pushManager: manager,
+      },
+    }
+  }
+  const old = createRegistration(
+    '/cio-webpush-sw.js',
+    '/',
+    'https://push.example/old-scope'
+  )
+  const destination = createRegistration(
+    '/notifications/cio-webpush-sw.js',
+    '/notifications/',
+    'https://push.example/new-scope'
+  )
+  const alternate = createRegistration(
+    '/alternate/cio-webpush-sw.js',
+    '/alternate/',
+    'https://push.example/alternate-scope'
+  )
+  let destinationRegistered = false
+  let alternateRegistered = false
+  const sw = {
+    getRegistration: jest.fn(async (url: string) => {
+      const path = new URL(url, location.href).pathname
+      if (destinationRegistered && path.startsWith('/notifications/'))
+        return destination.registration
+      if (alternateRegistered && path.startsWith('/alternate/'))
+        return alternate.registration
+      return old.registration
+    }),
+    register: jest.fn(async (url: string) => {
+      const path = new URL(url, location.href).pathname
+      if (path === '/cio-webpush-sw.js') return old.registration
+      if (path === '/notifications/cio-webpush-sw.js') {
+        destinationRegistered = true
+        return destination.registration
+      }
+      if (path === '/alternate/cio-webpush-sw.js') {
+        alternateRegistered = true
+        return alternate.registration
+      }
+      throw new Error('Unexpected worker path')
+    }),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+  }
+  Object.defineProperty(navigator, 'serviceWorker', {
+    configurable: true,
+    value: sw,
+  })
+  Object.defineProperty(window, 'PushManager', {
+    configurable: true,
+    value: function () {},
+  })
+  Object.defineProperty(window, 'Notification', {
+    configurable: true,
+    value: { requestPermission: jest.fn().mockResolvedValue('granted') },
+  })
+  return { old, destination, alternate, sw }
+}
+
+test.each(['identify without reset', 'lookup after reload', 'unsubscribe'])(
+  'a failed switch to an empty destination preserves the previous path for %s',
+  async (operation) => {
+    const b = scopedBrowser()
+    const first = await load()
+    await first.analytics.identify('A')
+    await first.analytics.webPush!.subscribe()
+    b.destination.manager.subscribe.mockRejectedValueOnce(
+      new Error('push service unavailable')
+    )
+
+    await expect(
+      first.analytics.webPush!.subscribe({
+        serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+      })
+    ).rejects.toThrow('push service unavailable')
+    expect((await b.old.manager.getSubscription())?.endpoint).toBe(
+      b.old.value.endpoint
+    )
+    expect(await b.destination.manager.getSubscription()).toBeNull()
+
+    if (operation === 'identify without reset') {
+      await first.analytics.identify('B')
+      await until(() => first.events.length >= 3)
+      // Rollback and identify can both reconcile; an extra B upsert is allowed.
+      expect(eventShape(first.events).slice(1, 3)).toEqual([
+        {
+          event: 'Device Deleted',
+          userId: 'A',
+          device: { token: b.old.value.endpoint, type: 'web' },
+        },
+        {
+          event: 'Device Created or Updated',
+          userId: 'B',
+          device: { token: b.old.value.endpoint, type: 'web' },
+        },
+      ])
+      expect(
+        JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+      ).toEqual({ endpoint: b.old.value.endpoint, userId: 'B' })
+    } else if (operation === 'lookup after reload') {
+      await first.analytics.deregister(name)
+      const reloaded = await load()
+      const actual = await reloaded.analytics.webPush!.subscription()
+      expect(actual).toEqual(b.old.value)
+    } else {
+      await first.analytics.webPush!.unsubscribe()
+      expect(b.old.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+      expect(eventShape(first.events).slice(1)).toEqual([
+        {
+          event: 'Device Deleted',
+          userId: 'A',
+          device: { token: b.old.value.endpoint, type: 'web' },
+        },
+      ])
+    }
+  }
+)
+
+test('identify while an empty destination subscribe is pending reconciles the old scope after failure', async () => {
+  const b = scopedBrowser()
+  const { analytics, events } = await load()
+  await analytics.identify('A')
+  await analytics.webPush!.subscribe()
+  let rejectSubscription: (error: Error) => void = () => {
+    throw new Error('Destination subscribe has not started')
+  }
+  let started: () => void = () => {}
+  const pending = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  b.destination.manager.subscribe.mockImplementationOnce(
+    () =>
+      new Promise<typeof b.destination.subscription>((_resolve, reject) => {
+        rejectSubscription = reject
+        started()
+      })
+  )
+  const switching = analytics.webPush!.subscribe({
+    serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+  })
+  const rejected = expect(switching).rejects.toThrow('push service unavailable')
+  await pending
+  await analytics.identify('B')
+  rejectSubscription(new Error('push service unavailable'))
+  await rejected
+  await until(() => events.length === 3)
+
+  expect(eventShape(events).slice(1)).toEqual([
+    {
+      event: 'Device Deleted',
+      userId: 'A',
+      device: { token: b.old.value.endpoint, type: 'web' },
+    },
+    {
+      event: 'Device Created or Updated',
+      userId: 'B',
+      device: { token: b.old.value.endpoint, type: 'web' },
+    },
+  ])
+})
+
+test('a failed destination rotation retains its owner and selection for reload/reset retry', async () => {
+  const b = scopedBrowser()
+  const first = await load()
+  await first.analytics.identify('A')
+  await first.analytics.webPush!.subscribe()
+  await b.destination.manager.subscribe()
+  b.destination.subscription.options.applicationServerKey = Uint8Array.from([
+    4,
+    ...Array(64).fill(98),
+  ]).buffer
+  const previous = JSON.stringify({
+    endpoint: b.destination.value.endpoint,
+    userId: 'other',
+  })
+  localStorage.setItem('cio-webpush:/notifications/cio-webpush-sw.js', previous)
+  const track = jest.spyOn(first.analytics, 'track')
+  track.mockRejectedValueOnce(new Error('offline delete'))
+
+  await expect(
+    first.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('offline delete')
+
+  expect(b.destination.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  expect(localStorage.getItem('cio-webpush:worker:/cio-webpush-sw.js')).toBe(
+    '/notifications/cio-webpush-sw.js'
+  )
+  expect(
+    localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
+  ).toBe(previous)
+  track.mockRestore()
+  await first.analytics.deregister(name)
+
+  const reloaded = await load()
+  reloaded.analytics.reset()
+  await until(() => reloaded.events.length === 1)
+  expect(eventShape(reloaded.events)).toEqual([
+    {
+      event: 'Device Deleted',
+      userId: 'other',
+      device: { token: b.destination.value.endpoint, type: 'web' },
+    },
+  ])
+})
+
+test('a new destination subscription remains reachable when device deletion fails and retries after reload', async () => {
+  const b = scopedBrowser()
+  const first = await load()
+  await first.analytics.identify('A')
+  await first.analytics.webPush!.subscribe()
+  const track = jest.spyOn(first.analytics, 'track')
+  track.mockRejectedValueOnce(new Error('offline delete'))
+
+  await expect(
+    first.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('offline delete')
+
+  await expect(first.analytics.webPush!.subscription()).resolves.toEqual(
+    b.destination.value
+  )
+  expect(
+    JSON.parse(
+      localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
+    )
+  ).toEqual({ endpoint: b.old.value.endpoint, userId: 'A' })
+  track.mockRestore()
+  await first.analytics.deregister(name)
+
+  const reloaded = await load()
+  await until(() => reloaded.events.length === 2)
+  expect(eventShape(reloaded.events)).toEqual([
+    {
+      event: 'Device Deleted',
+      userId: 'A',
+      device: { token: b.old.value.endpoint, type: 'web' },
+    },
+    {
+      event: 'Device Created or Updated',
+      userId: 'A',
+      device: { token: b.destination.value.endpoint, type: 'web' },
+    },
+  ])
+})
+
+test('a stored destination owner survives failed browser subscription without deletion', async () => {
+  const b = scopedBrowser()
+  const { analytics, events } = await load()
+  await analytics.identify('A')
+  await analytics.webPush!.subscribe()
+  const previous = JSON.stringify({
+    endpoint: b.destination.value.endpoint,
+    userId: 'other',
+  })
+  localStorage.setItem('cio-webpush:/notifications/cio-webpush-sw.js', previous)
+  b.destination.manager.subscribe.mockRejectedValueOnce(
+    new Error('push service unavailable')
+  )
+
+  await expect(
+    analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('push service unavailable')
+
+  expect(
+    localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
+  ).toBe(previous)
+  expect(eventShape(events).slice(1)).toEqual([])
+  expect(localStorage.getItem('cio-webpush:worker:/cio-webpush-sw.js')).toBe(
+    '/cio-webpush-sw.js'
+  )
+  await expect(analytics.webPush!.subscription()).resolves.toEqual(b.old.value)
+})
+
+test.each(['same path', 'different path'])(
+  'a stale failed switch does not hide a later successful subscribe at the %s',
+  async (target) => {
+    const b = scopedBrowser()
+    const { analytics } = await load()
+    await analytics.identify('A')
+    await analytics.webPush!.subscribe()
+    let rejectSubscription: (error: Error) => void = () => {
+      throw new Error('Destination subscribe has not started')
+    }
+    let started: () => void = () => {}
+    const pending = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    b.destination.manager.subscribe.mockImplementationOnce(
+      () =>
+        new Promise<typeof b.destination.subscription>((_resolve, reject) => {
+          rejectSubscription = reject
+          started()
+        })
+    )
+    const switching = analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+    const rejected = expect(switching).rejects.toThrow(
+      'push service unavailable'
+    )
+    await pending
+    const path =
+      target === 'same path'
+        ? '/notifications/cio-webpush-sw.js'
+        : '/alternate/cio-webpush-sw.js'
+    const newer = target === 'same path' ? b.destination : b.alternate
+    await expect(
+      analytics.webPush!.subscribe({ serviceWorkerUrl: path })
+    ).resolves.toEqual(newer.value)
+    const owner = localStorage.getItem(`cio-webpush:${path}`)
+    expect(JSON.parse(owner!)).toEqual({
+      endpoint: newer.value.endpoint,
+      userId: 'A',
+    })
+    rejectSubscription(new Error('push service unavailable'))
+    await rejected
+
+    expect(localStorage.getItem('cio-webpush:worker:/cio-webpush-sw.js')).toBe(
+      path
+    )
+    expect(localStorage.getItem(`cio-webpush:${path}`)).toBe(owner)
+    await expect(analytics.webPush!.subscription()).resolves.toEqual(
+      newer.value
+    )
+  }
+)
+
+test('a failed destination lookup preserves the previous selection and existing destination subscription', async () => {
+  const b = scopedBrowser()
+  const { analytics, events } = await load()
+  await analytics.identify('A')
+  await analytics.webPush!.subscribe()
+  await b.destination.manager.subscribe()
+  const previous = JSON.stringify({
+    endpoint: b.destination.value.endpoint,
+    userId: 'other',
+  })
+  localStorage.setItem('cio-webpush:/notifications/cio-webpush-sw.js', previous)
+  b.destination.manager.getSubscription.mockRejectedValueOnce(
+    new Error('subscription lookup failed')
+  )
+
+  await expect(
+    analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('subscription lookup failed')
+
+  expect(localStorage.getItem('cio-webpush:worker:/cio-webpush-sw.js')).toBe(
+    '/cio-webpush-sw.js'
+  )
+  expect(
+    localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
+  ).toBe(previous)
+  await expect(analytics.webPush!.subscription()).resolves.toEqual(b.old.value)
+  expect((await b.destination.manager.getSubscription())?.endpoint).toBe(
+    b.destination.value.endpoint
+  )
+  expect(eventShape(events).slice(1)).toEqual([])
+})
+
 async function until(check: () => boolean) {
   for (let i = 0; i < 100; i++) {
     if (check()) return
@@ -330,6 +733,81 @@ test('VAPID rotation unsubscribes and deletes before subscribing with the new ke
   )
   track.mockRestore()
   expect(b.manager.subscribe).toHaveBeenCalledTimes(1)
+})
+
+test('changing worker path after reload deletes the persisted subscription owner', async () => {
+  const b = browser()
+  const first = await load()
+  await first.analytics.identify('A')
+  await first.analytics.webPush!.subscribe()
+  await first.analytics.deregister(name)
+  const second = await load()
+  expect((await second.analytics.webPush!.subscription())?.endpoint).toBe(
+    b.replacement.endpoint
+  )
+  expect(second.events).toEqual([])
+  b.manager.subscribe.mockImplementationOnce(async () => {
+    b.setLive(b.initial)
+    return b.initial
+  })
+  await second.analytics.webPush!.subscribe({
+    serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+  })
+  expect(eventShape(second.events)).toEqual([
+    {
+      event: 'Device Deleted',
+      userId: 'A',
+      device: { token: b.replacement.endpoint, type: 'web' },
+    },
+    {
+      event: 'Device Created or Updated',
+      userId: 'A',
+      device: { token: b.initial.endpoint, type: 'web' },
+    },
+  ])
+})
+
+test('failed worker path switch keeps the previous path for reset after reload', async () => {
+  const b = scopedBrowser()
+  const first = await load()
+  await first.analytics.identify('A')
+  await first.analytics.webPush!.subscribe()
+  b.destination.manager.subscribe.mockRejectedValueOnce(
+    new Error('push service unavailable')
+  )
+  await expect(
+    first.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/notifications/cio-webpush-sw.js',
+    })
+  ).rejects.toThrow('push service unavailable')
+  expect(localStorage.getItem('cio-webpush:worker:/cio-webpush-sw.js')).toBe(
+    '/cio-webpush-sw.js'
+  )
+  expect(
+    localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
+  ).toBeNull()
+  await first.analytics.deregister(name)
+
+  const second = await load()
+  await expect(second.analytics.webPush!.subscription()).resolves.toEqual(
+    b.old.value
+  )
+  second.analytics.reset()
+  await until(() => second.events.length === 1)
+  expect(b.sw.getRegistration).toHaveBeenLastCalledWith('/cio-webpush-sw.js')
+  expect(eventShape(second.events)).toEqual([
+    {
+      event: 'Device Deleted',
+      userId: 'A',
+      device: { token: b.old.value.endpoint, type: 'web' },
+    },
+  ])
+  expect(
+    JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+  ).toEqual({ endpoint: b.old.value.endpoint, userId: null })
+  expect(
+    localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
+  ).toBeNull()
 })
 
 test('worker message deletes the old endpoint before registering its replacement', async () => {
