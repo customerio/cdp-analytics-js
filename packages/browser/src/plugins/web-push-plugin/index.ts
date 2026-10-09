@@ -43,6 +43,14 @@ function supported(): void {
   }
 }
 
+function sameKey(existing: ArrayBuffer, key: Uint8Array): boolean {
+  const bytes = new Uint8Array(existing)
+  return (
+    bytes.byteLength === key.byteLength &&
+    bytes.every((byte, i) => byte === key[i])
+  )
+}
+
 function json(subscription: PushSubscription): WebPushSubscriptionJSON {
   const value = subscription.toJSON()
   if (!value.endpoint || !value.keys?.p256dh || !value.keys?.auth) {
@@ -255,28 +263,41 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         /* Persistence is optional in private browsing. */
       }
       const existing = await reg.pushManager.getSubscription()
-      const existingKey = existing?.options?.applicationServerKey
-      if (
-        existing &&
-        (!existingKey ||
-          existingKey.byteLength !== key.byteLength ||
-          new Uint8Array(existingKey).some((byte, i) => byte !== key[i]))
-      ) {
-        if (!(await existing.unsubscribe()))
+      // A browser may not expose an existing subscription's key: unknown, not a mismatch.
+      const existingKey = existing?.options?.applicationServerKey ?? null
+      const rotate = async (current: PushSubscription) => {
+        if (!(await current.unsubscribe()))
           throw new Error('Browser unsubscribe failed.')
         await mutate(async () => {
           const previous = stored() ?? {
-            endpoint: existing.endpoint,
+            endpoint: current.endpoint,
             userId: analytics.user().id() ?? null,
           }
           await deleteDevice(previous)
           save(null)
         })
       }
-      const subscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: key,
-      })
+      if (existing && existingKey && !sameKey(existingKey, key))
+        await rotate(existing)
+      const options = { userVisibleOnly: true, applicationServerKey: key }
+      let subscription: PushSubscription
+      try {
+        subscription = await reg.pushManager.subscribe(options)
+      } catch (error) {
+        // The browser reuses a matching subscription and rejects a different key
+        // with InvalidStateError. It uses that error when the worker is gone too,
+        // so rotate only while this registration's worker is still active.
+        if (
+          !existing ||
+          existingKey ||
+          !(error instanceof DOMException) ||
+          error.name !== 'InvalidStateError' ||
+          reg.active?.state !== 'activated'
+        )
+          throw error
+        await rotate(existing)
+        subscription = await reg.pushManager.subscribe(options)
+      }
       return registerDevice(subscription)
     },
     unsubscribe: async () => {
