@@ -112,6 +112,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     }
   }
   let mutations: Promise<unknown> = Promise.resolve()
+  let selections = 0
   const mutate = <T>(task: () => Promise<T>): Promise<T> => {
     const result = mutations.then(task)
     mutations = result.catch(() => {})
@@ -275,28 +276,61 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         url.pathname + url.search
       )
       await activated(reg)
-      // Keep the previous lookup if registration or activation fails. Remember
-      // its owner before switching keys, including unchanged reloads.
+      // Read the destination before selecting it. The read changes nothing in
+      // the browser, so a failed lookup leaves the previous path selected.
+      const existing = await reg.pushManager.getSubscription()
+      // A browser may not expose an existing subscription's key: unknown, not a mismatch.
+      const existingKey = existing?.options?.applicationServerKey ?? null
+      // Remember the previous selection and owner, then switch keys without
+      // awaiting, including unchanged reloads.
+      const previousWorkerUrl = workerUrl
+      const sourceKey = storageKey()
+      let previousSelection: string | null = null
+      try {
+        previousSelection = localStorage.getItem(workerStorageKey)
+      } catch {
+        /* Persistence is optional in private browsing. */
+      }
       const carried = stored()
       workerUrl = nextWorkerUrl
+      const destinationKey = storageKey()
+      // Every subscribe that selects a path advances this, so a stale failure
+      // never undoes a later selection at the same or another path.
+      const selection = ++selections
       try {
         localStorage.setItem(workerStorageKey, workerUrl)
       } catch {
         /* Persistence is optional in private browsing. */
       }
       // Durably retain the carried owner under the new lookup before awaiting
-      // the browser, so a reload and reset can still delete it. Never
-      // overwrite a record already present at the destination.
+      // the browser, so a reload after an interrupted switch can still delete
+      // it. Never overwrite a record already present at the destination.
       let destination: string | null = null
       try {
-        destination = localStorage.getItem(storageKey())
+        destination = localStorage.getItem(destinationKey)
       } catch {
         /* Persistence is optional in private browsing. */
       }
+      const copied = carried && !destination ? JSON.stringify(carried) : null
       if (carried && !destination) save(carried)
-      const existing = await reg.pushManager.getSubscription()
-      // A browser may not expose an existing subscription's key: unknown, not a mismatch.
-      const existingKey = existing?.options?.applicationServerKey ?? null
+      // The browser had no subscription at the new path and created none:
+      // restore the previous selection so subscription, unsubscribe, identify
+      // and reset still reach the previous path's subscription and owner.
+      const rollback = () => {
+        if (destinationKey === sourceKey || selection !== selections) return
+        try {
+          if (copied && localStorage.getItem(destinationKey) === copied)
+            localStorage.removeItem(destinationKey)
+          if (previousSelection === null)
+            localStorage.removeItem(workerStorageKey)
+          else localStorage.setItem(workerStorageKey, previousSelection)
+        } catch {
+          /* Persistence is optional in private browsing. */
+        }
+        workerUrl = previousWorkerUrl
+        // Identity may have changed while the new path was selected.
+        if (analytics.user().id()) background(reconcile())
+      }
       const rotate = async (current: PushSubscription) => {
         if (!(await current.unsubscribe()))
           throw new Error('Browser unsubscribe failed.')
@@ -317,6 +351,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       try {
         subscription = await reg.pushManager.subscribe(options)
       } catch (error) {
+        if (!existing) rollback()
         // The browser reuses a matching subscription and rejects a different key
         // with InvalidStateError. It uses that error when the worker is gone too,
         // so rotate only while this registration's worker is still active.

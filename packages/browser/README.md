@@ -87,8 +87,12 @@ Passing a new path directly to `subscribe({ serviceWorkerUrl })` is supported
 with limits. If nothing is stored yet for the new path, the old path's stored
 owner is retained there before the new subscription is created; a successful
 subscribe then deletes that device (when its owner is known) and registers the
-new one. If that subscribe fails, a later reload followed by reset can delete
-the retained known owner's device. If the new path already has a stored record,
+new one. If the browser has no subscription at the new path and fails to
+create one, the previous path stays selected and its stored owner is unchanged,
+so `subscription()`, unsubscribe, identify and reset continue to act on the
+previous path. If the failure happens after a new-path subscription was created
+or an existing one was rotated, the new path stays selected and reset or a later
+subscribe can delete its retained owner. If the new path already has a stored record,
 that record wins and the old path's device is neither transferred nor deleted,
 so direct migration does not clean up both paths. Subscribe deletes the
 destination record's device only when its endpoint or owner differs; an
