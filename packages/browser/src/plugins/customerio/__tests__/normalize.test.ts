@@ -109,6 +109,24 @@ describe('before loading', () => {
       expect(object.anonymousId).toEqual('👻')
     })
 
+    it('should keep an explicit null .anonymousId when .userId is given', () => {
+      analytics.user().anonymousId('anon-id')
+      const object: CustomerioEvent = {
+        userId: 'baz',
+        type: 'track',
+        anonymousId: null,
+      }
+      normalize(analytics, object, options, {})
+      expect(object.anonymousId).toBeNull()
+    })
+
+    it('should fill an explicit null .anonymousId without a .userId', () => {
+      analytics.user().anonymousId('anon-id')
+      const object: CustomerioEvent = { type: 'track', anonymousId: null }
+      normalize(analytics, object, options, {})
+      expect(object.anonymousId).toEqual('anon-id')
+    })
+
     it('should add .context', () => {
       normalize(analytics, object, options, {})
       assert(object.context)
