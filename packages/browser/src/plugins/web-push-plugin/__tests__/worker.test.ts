@@ -66,12 +66,18 @@ function createWorker(
 
 describe('cio-webpush-sw.js', () => {
   const setup = () => createWorker(worker)
+  const relayMarkers = {
+    'CIO-Delivery-ID': 'delivery',
+    'CIO-Delivery-Token': 'endpoint',
+  }
+  const notificationMarkers = { delivery_id: 'delivery', device_id: 'endpoint' }
 
   test('push shows the notification, then sends a text-body delivered metric', async () => {
     const s = setup()
     await s.invoke('push', {
       data: {
         json: () => ({
+          ...relayMarkers,
           title: 'Title',
           body: 'Body',
           image: '/image.png',
@@ -139,7 +145,11 @@ describe('cio-webpush-sw.js', () => {
     await s.invoke('notificationclick', {
       notification: {
         close,
-        data: { link: '/destination', delivery_id: 'delivery' },
+        data: {
+          ...notificationMarkers,
+          link: '/destination',
+          delivery_id: 'delivery',
+        },
       },
     })
     expect(close).toHaveBeenCalled()
@@ -147,7 +157,14 @@ describe('cio-webpush-sw.js', () => {
     expect(JSON.parse(s.fetch.mock.calls[0][1].body).event).toBe('opened')
     s.fetch.mockImplementation(() => new Promise(() => {}))
     void s.invoke('notificationclick', {
-      notification: { close, data: { link: '/slow', delivery_id: 'delivery' } },
+      notification: {
+        close,
+        data: {
+          ...notificationMarkers,
+          link: '/slow',
+          delivery_id: 'delivery',
+        },
+      },
     })
     expect(s.openWindow).toHaveBeenCalledWith('https://example.com/slow')
   })
@@ -166,7 +183,10 @@ describe('cio-webpush-sw.js', () => {
   ])('an unsafe body link falls back to the origin root: %j', async (link) => {
     const s = setup()
     await s.invoke('notificationclick', {
-      notification: { close: jest.fn(), data: { link } },
+      notification: {
+        close: jest.fn(),
+        data: { ...notificationMarkers, link },
+      },
     })
     expect(s.openWindow).toHaveBeenCalledWith('/')
   })
@@ -179,7 +199,10 @@ describe('cio-webpush-sw.js', () => {
     async (link, destination) => {
       const s = setup()
       await s.invoke('notificationclick', {
-        notification: { close: jest.fn(), data: { link } },
+        notification: {
+          close: jest.fn(),
+          data: { ...notificationMarkers, link },
+        },
       })
       expect(s.openWindow).toHaveBeenCalledWith(destination)
     }
@@ -201,7 +224,10 @@ describe('cio-webpush-sw.js', () => {
     async (link, destination) => {
       const s = createWorker(worker, nestedWorkerUrl)
       await s.invoke('notificationclick', {
-        notification: { close: jest.fn(), data: { link } },
+        notification: {
+          close: jest.fn(),
+          data: { ...notificationMarkers, link },
+        },
       })
       expect(s.openWindow).toHaveBeenCalledWith(destination)
     }
@@ -214,6 +240,7 @@ describe('cio-webpush-sw.js', () => {
       notification: {
         close: jest.fn(),
         data: {
+          ...notificationMarkers,
           link: 'orders',
           actions: [{ action: 'later', title: 'Later' }],
         },
@@ -230,7 +257,10 @@ describe('cio-webpush-sw.js', () => {
   ])('an HTTP development worker opens only HTTPS links: %s', async (link) => {
     const s = createWorker(worker, 'http://localhost:8000/cio-webpush-sw.js')
     await s.invoke('notificationclick', {
-      notification: { close: jest.fn(), data: { link } },
+      notification: {
+        close: jest.fn(),
+        data: { ...notificationMarkers, link },
+      },
     })
     expect(s.openWindow).toHaveBeenCalledWith('/')
   })
@@ -253,14 +283,18 @@ describe('cio-webpush-sw.js', () => {
         action: 'view',
         notification: {
           close: jest.fn(),
-          data: { link, actions: [{ action: 'view', url }] },
+          data: {
+            ...notificationMarkers,
+            link,
+            actions: [{ action: 'view', url }],
+          },
         },
       })
       expect(s.openWindow).toHaveBeenCalledWith(destination)
     }
   )
 
-  test('invalid JSON still shows a notification but sends no incomplete metric', async () => {
+  test('invalid JSON cannot claim a notification in a shared worker', async () => {
     const s = setup()
     await s.invoke('push', {
       data: {
@@ -269,7 +303,7 @@ describe('cio-webpush-sw.js', () => {
         },
       },
     })
-    expect(s.showNotification).toHaveBeenCalled()
+    expect(s.showNotification).not.toHaveBeenCalled()
     expect(s.fetch).not.toHaveBeenCalled()
   })
 
@@ -283,9 +317,11 @@ describe('cio-webpush-sw.js', () => {
     })
   })
 
-  test('minimal payload uses only default options and no metrics', async () => {
+  test('a minimal Customer.io payload uses default options and reports delivery', async () => {
     const s = setup()
-    await s.invoke('push', { data: { json: () => ({ title: 'Minimal' }) } })
+    await s.invoke('push', {
+      data: { json: () => ({ ...relayMarkers, title: 'Minimal' }) },
+    })
     expect(s.showNotification).toHaveBeenCalledWith('Minimal', {
       body: undefined,
       image: undefined,
@@ -295,11 +331,11 @@ describe('cio-webpush-sw.js', () => {
       data: {
         link: undefined,
         actions: [],
-        delivery_id: undefined,
-        device_id: undefined,
+        delivery_id: 'delivery',
+        device_id: 'endpoint',
       },
     })
-    expect(s.fetch).not.toHaveBeenCalled()
+    expect(s.fetch).toHaveBeenCalled()
   })
 
   test.each([
@@ -324,7 +360,7 @@ describe('cio-webpush-sw.js', () => {
   ])('drops malformed actions: %j', async (actions) => {
     const s = setup()
     await s.invoke('push', {
-      data: { json: () => ({ title: 'Title', actions }) },
+      data: { json: () => ({ ...relayMarkers, title: 'Title', actions }) },
     })
     expect(s.showNotification.mock.calls[0][1].actions).toEqual([])
     expect(s.showNotification.mock.calls[0][1].data.actions).toEqual([])
@@ -347,7 +383,11 @@ describe('cio-webpush-sw.js', () => {
     const s = setup()
     await s.invoke('push', {
       data: {
-        json: () => ({ title: 'Title', actions: [{ action: 'view', title }] }),
+        json: () => ({
+          ...relayMarkers,
+          title: 'Title',
+          actions: [{ action: 'view', title }],
+        }),
       },
     })
     expect(s.showNotification.mock.calls[0][1].actions).toEqual(
@@ -360,6 +400,7 @@ describe('cio-webpush-sw.js', () => {
     await s.invoke('push', {
       data: {
         json: () => ({
+          ...relayMarkers,
           actions: [
             null,
             { action: 'view', title: 'View' },
@@ -388,6 +429,7 @@ describe('cio-webpush-sw.js', () => {
       const notification = {
         close,
         data: {
+          ...notificationMarkers,
           link: '/destination',
           delivery_id: 'delivery',
           actions: [
@@ -420,5 +462,61 @@ describe('cio-webpush-sw.js', () => {
     })
     expect(s.fetch).not.toHaveBeenCalled()
     expect(s.openWindow).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    { title: 'Another provider', body: 'A foreign message' },
+    { 'CIO-Delivery-ID': 'delivery' },
+    { 'CIO-Delivery-Token': 'endpoint' },
+    { 'CIO-Delivery-ID': 42, 'CIO-Delivery-Token': 'endpoint' },
+    { 'CIO-Delivery-ID': 'delivery', 'CIO-Delivery-Token': '' },
+    null,
+    [],
+  ])(
+    'a shared worker leaves an unowned push untouched: %j',
+    async (payload) => {
+      const s = setup()
+      await s.invoke('push', { data: { json: () => payload } })
+      expect(s.showNotification).not.toHaveBeenCalled()
+      expect(s.fetch).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([
+    { link: '/another-provider' },
+    { link: '/another-provider', delivery_id: 'other' },
+    { link: '/another-provider', device_id: 'other' },
+    { delivery_id: '', device_id: 'other' },
+    { delivery_id: 42, device_id: 'other' },
+    undefined,
+  ])('a shared worker leaves an unowned click untouched: %j', async (data) => {
+    const s = setup()
+    const close = jest.fn()
+    await s.invoke('notificationclick', { notification: { close, data } })
+    expect(close).not.toHaveBeenCalled()
+    expect(s.openWindow).not.toHaveBeenCalled()
+    expect(s.fetch).not.toHaveBeenCalled()
+  })
+
+  test('a Customer.io test send without a link displays and opens the root on click', async () => {
+    const s = setup()
+    await s.invoke('push', {
+      data: {
+        json: () => ({
+          body: 'Test message',
+          'CIO-Delivery-ID': 'test-delivery',
+          'CIO-Delivery-Token': 'endpoint',
+        }),
+      },
+    })
+    const close = jest.fn()
+    await s.invoke('notificationclick', {
+      notification: { close, data: s.showNotification.mock.calls[0][1].data },
+    })
+    expect(close).toHaveBeenCalled()
+    expect(s.openWindow).toHaveBeenCalledWith('/')
+    expect(
+      s.fetch.mock.calls.map(([, options]) => JSON.parse(options.body).event)
+    ).toEqual(['delivered', 'opened'])
   })
 })

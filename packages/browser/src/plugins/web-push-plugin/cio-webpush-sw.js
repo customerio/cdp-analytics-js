@@ -6,6 +6,15 @@ self.addEventListener('activate', (event) =>
   event.waitUntil(self.clients.claim())
 )
 
+function owned(deliveryId, deviceId) {
+  return (
+    typeof deliveryId === 'string' &&
+    deliveryId.length > 0 &&
+    typeof deviceId === 'string' &&
+    deviceId.length > 0
+  )
+}
+
 async function metric(data, event, action) {
   try {
     const device_id =
@@ -37,11 +46,12 @@ self.addEventListener('push', (event) => {
         if (!payload || typeof payload !== 'object' || Array.isArray(payload))
           throw new Error('Expected a JSON object')
       } catch {
-        payload = {
-          title: 'Notification',
-          body: 'You have a new notification.',
-        }
+        return
       }
+      // The relay adds both markers, including for test sends. A shared worker
+      // must leave other providers' payloads for their own handlers.
+      if (!owned(payload['CIO-Delivery-ID'], payload['CIO-Delivery-Token']))
+        return
       const actions = []
       if (Array.isArray(payload.actions)) {
         for (const entry of payload.actions) {
@@ -112,8 +122,10 @@ function safeLink(value) {
 }
 
 self.addEventListener('notificationclick', (event) => {
-  event.notification.close()
   const data = event.notification.data || {}
+  // Existing Customer.io notifications already retain these relay markers.
+  if (!owned(data.delivery_id, data.device_id)) return
+  event.notification.close()
   const action = Array.isArray(data.actions)
     ? data.actions.find((entry) => entry && entry.action === event.action)
     : undefined
