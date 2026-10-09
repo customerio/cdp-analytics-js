@@ -132,6 +132,7 @@ export class Analytics
   options: InitOptions
   queue: EventQueue
   inbox?: (...topics: string[]) => import('../../plugins/in-app-plugin').InboxAPI
+  webPush?: import('../../plugins/web-push-plugin').WebPushAPI
 
   constructor(
     settings: AnalyticsSettings,

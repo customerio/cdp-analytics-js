@@ -7,6 +7,7 @@
         "**/tsconfig*.json",
         "**/*.ts",
         "**/*.tsx",
+        "src/plugins/web-push-plugin/cio-webpush-sw.js",
         ":!**/__tests__/**"
       ],
       "outputs": ["dist/**", ".next/**"]
