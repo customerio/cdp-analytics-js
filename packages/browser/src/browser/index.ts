@@ -236,7 +236,7 @@ async function registerPlugins(
   const webPushPlugin =
     webPushSettings && webPushSettings.enabled !== false
       ? await import(
-          /* webpackChunkName: "webPushPlugin" */ '../plugins/web-push-plugin'
+          /* webpackChunkName: "webPushPluginChunk" */ '../plugins/web-push-plugin'
         ).then((mod) => mod.WebPushPlugin(webPushSettings))
       : undefined
 
