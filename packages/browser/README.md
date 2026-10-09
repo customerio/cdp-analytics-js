@@ -53,6 +53,11 @@ Options:
 
 - `vapidPublicKey`: required public base64url VAPID key (not the private key).
 - `serviceWorkerUrl`: defaults to `/cio-webpush-sw.js`; must be same-origin.
+  Register the worker file directly (the plugin does, appending `?track=`). If you
+  import it into your own service worker with `importScripts` instead, your worker
+  owns its lifecycle: set `self.cioWebPushLifecycle = false` before the import so
+  the file skips `skipWaiting()`/`clients.claim()`, and register your worker with
+  the same `?track=` query so delivered and opened events still reach Customer.io.
 - `trackUrl`: defaults to `https://track.customer.io`, or `https://track-eu.customer.io`
   when using the EU CDN. Set it explicitly when proxying the SDK or using the
   standalone plugin with a custom CDN.
