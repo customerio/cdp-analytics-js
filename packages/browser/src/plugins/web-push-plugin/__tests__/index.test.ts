@@ -20,7 +20,11 @@ function setup(userId: string | null = 'person') {
     getSubscription: jest.fn().mockResolvedValue(null),
     subscribe: jest.fn().mockResolvedValue(subscription),
   }
-  const registration = {
+  const registration: {
+    scope: string
+    active: { state: string; scriptURL: string } | null
+    pushManager: typeof manager
+  } = {
     scope: 'http://localhost/',
     active: {
       state: 'activated',
@@ -64,10 +68,197 @@ function setup(userId: string | null = 'person') {
     id = null
     listeners.reset()
   }
-  return { analytics, plugin, load, identify, reset, manager, sw, subscription }
+  return {
+    analytics,
+    plugin,
+    load,
+    identify,
+    reset,
+    manager,
+    registration,
+    sw,
+    subscription,
+  }
 }
 
 beforeEach(() => localStorage.clear())
+
+test('reuses a compatible subscription when the browser does not expose its key', async () => {
+  const s = setup()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const track = jest.mocked(s.analytics.track)
+  const before = track.mock.calls.length
+
+  await expect(s.analytics.webPush!.subscribe()).resolves.toEqual(value)
+
+  expect(s.subscription.unsubscribe).not.toHaveBeenCalled()
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(track.mock.calls.slice(before).map(([event]) => event)).toEqual([
+    'Device Created or Updated',
+  ])
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('rotates an unexposed key only after the active browser reports a mismatch', async () => {
+  const s = setup()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const track = jest.mocked(s.analytics.track)
+  const before = track.mock.calls.length
+  s.manager.subscribe.mockRejectedValueOnce(
+    new DOMException('different key', 'InvalidStateError')
+  )
+
+  await expect(s.analytics.webPush!.subscribe()).resolves.toEqual(value)
+
+  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(2)
+  expect(s.manager.subscribe.mock.invocationCallOrder[0]).toBeLessThan(
+    s.subscription.unsubscribe.mock.invocationCallOrder[0]
+  )
+  expect(track.mock.calls.slice(before).map(([event]) => event)).toEqual([
+    'Device Deleted',
+    'Device Created or Updated',
+  ])
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('keeps the subscription and owner when the worker disappears during subscribe', async () => {
+  const s = setup()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const track = jest.mocked(s.analytics.track)
+  const before = track.mock.calls.length
+  const owner = localStorage.getItem('cio-webpush:/cio-webpush-sw.js')
+  const error = new DOMException('no worker', 'InvalidStateError')
+  s.manager.subscribe.mockImplementationOnce(async () => {
+    s.registration.active = null
+    throw error
+  })
+
+  await expect(s.analytics.webPush!.subscribe()).rejects.toBe(error)
+
+  expect(s.subscription.unsubscribe).not.toHaveBeenCalled()
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(track.mock.calls.slice(before)).toEqual([])
+  expect(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')).toBe(owner)
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('does not retry InvalidStateError without an existing subscription', async () => {
+  const s = setup()
+  const error = new DOMException('no worker', 'InvalidStateError')
+  s.manager.subscribe.mockRejectedValueOnce(error)
+  await s.load()
+
+  await expect(s.analytics.webPush!.subscribe()).rejects.toBe(error)
+
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(s.subscription.unsubscribe).not.toHaveBeenCalled()
+  expect(s.analytics.track).not.toHaveBeenCalled()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each(['AbortError', 'NotAllowedError'])(
+  'keeps the subscription and owner when subscribe rejects with %s',
+  async (name) => {
+    const s = setup()
+    s.manager.getSubscription.mockResolvedValue(s.subscription)
+    await s.load()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const track = jest.mocked(s.analytics.track)
+    const before = track.mock.calls.length
+    const owner = localStorage.getItem('cio-webpush:/cio-webpush-sw.js')
+    const error = new DOMException('subscribe failed', name)
+    s.manager.subscribe.mockRejectedValueOnce(error)
+
+    await expect(s.analytics.webPush!.subscribe()).rejects.toBe(error)
+
+    expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+    expect(s.subscription.unsubscribe).not.toHaveBeenCalled()
+    expect(track.mock.calls.slice(before)).toEqual([])
+    expect(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')).toBe(owner)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  }
+)
+
+test('rotates a known different key before subscribing', async () => {
+  const s = setup()
+  s.manager.getSubscription.mockResolvedValue({
+    ...s.subscription,
+    options: {
+      applicationServerKey: Uint8Array.from([4, ...Array(64).fill(98)]).buffer,
+    },
+  })
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const track = jest.mocked(s.analytics.track)
+  const before = track.mock.calls.length
+
+  await expect(s.analytics.webPush!.subscribe()).resolves.toEqual(value)
+
+  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(s.subscription.unsubscribe.mock.invocationCallOrder[0]).toBeLessThan(
+    s.manager.subscribe.mock.invocationCallOrder[0]
+  )
+  expect(track.mock.calls.slice(before).map(([event]) => event)).toEqual([
+    'Device Deleted',
+    'Device Created or Updated',
+  ])
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('reuses a subscription with the requested exposed key', async () => {
+  const s = setup()
+  s.manager.getSubscription.mockResolvedValue({
+    ...s.subscription,
+    options: {
+      applicationServerKey: Uint8Array.from([4, ...Array(64).fill(97)]).buffer,
+    },
+  })
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const track = jest.mocked(s.analytics.track)
+  const before = track.mock.calls.length
+
+  await expect(s.analytics.webPush!.subscribe()).resolves.toEqual(value)
+
+  expect(s.subscription.unsubscribe).not.toHaveBeenCalled()
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(track.mock.calls.slice(before).map(([event]) => event)).toEqual([
+    'Device Created or Updated',
+  ])
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('keeps the owner when fallback browser unsubscribe fails', async () => {
+  const s = setup()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const track = jest.mocked(s.analytics.track)
+  const before = track.mock.calls.length
+  const owner = localStorage.getItem('cio-webpush:/cio-webpush-sw.js')
+  s.manager.subscribe.mockRejectedValueOnce(
+    new DOMException('different key', 'InvalidStateError')
+  )
+  s.subscription.unsubscribe.mockResolvedValueOnce(false)
+
+  await expect(s.analytics.webPush!.subscribe()).rejects.toThrow(
+    'Browser unsubscribe failed.'
+  )
+
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  expect(track.mock.calls.slice(before)).toEqual([])
+  expect(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')).toBe(owner)
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
 
 test('retains a fallback rotation owner after failed deletion so reload and reset retry', async () => {
   const s = setup()
