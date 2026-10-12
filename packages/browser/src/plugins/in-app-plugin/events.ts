@@ -19,26 +19,12 @@ export enum JourneysEvents {
     Opened = 'opened',
     Clicked = 'clicked',
     ViewedContent = 'viewed_content',
-    ClickedContent = 'clicked_content'
+    ClickedContent = 'clicked_content',
+    DismissedContent = 'dismissed_content'
 }
 
 export const ContentType = 'in_app_content'
 
 export function newEvent(type:string, detail:any): CustomEvent {
     return new CustomEvent(type, { detail })
-}
-
-export function gistToCIO(gistEvent:string): string {
-    switch (gistEvent) {
-        case 'messageShown':
-            return InAppEvents.MessageOpened;
-        case 'messageDismissed':
-            return InAppEvents.MessageDismissed;
-        case 'messageError':
-            return InAppEvents.MessageError;
-        case 'messageAction':
-            return InAppEvents.MessageAction;
-        default:
-            return "";
-    }
 }

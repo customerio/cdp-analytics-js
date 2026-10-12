@@ -9,7 +9,6 @@ import {
   JourneysEvents,
   newEvent,
   allEvents,
-  gistToCIO,
   ContentType,
 } from './events'
 import Gist, {
@@ -136,17 +135,48 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
           settings?.events as EventListenerOrEventListenerObject
         )
       })
-      ;['messageDismissed', 'messageError'].forEach((event) => {
-        Gist.events.on(event, (message: any) => {
-          _eventTarget.dispatchEvent(
-            newEvent(gistToCIO(event), {
-              messageId: message.messageId,
-              deliveryId: message.properties?.gist?.campaignId,
-            })
-          )
-        })
+      Gist.events.on('messageError', (message: any) => {
+        _eventTarget.dispatchEvent(
+          newEvent(InAppEvents.MessageError, {
+            messageId: message.messageId,
+            deliveryId: message.properties?.gist?.campaignId,
+          })
+        )
       })
     }
+
+    Gist.events.on('messageDismissed', (message: any) => {
+      const deliveryId: string = message?.properties?.gist?.campaignId
+      if (settings.events) {
+        _eventTarget.dispatchEvent(
+          newEvent(InAppEvents.MessageDismissed, {
+            messageId: message?.messageId,
+            deliveryId: deliveryId,
+          })
+        )
+      }
+      // The SDK fires messageDismissed for every removal and carries the
+      // reason; only the visitor closing the message meters as dismissed. The
+      // reason is required rather than defaulted, so an SDK that predates it
+      // (which fired this for snoozes and displacements too) cannot overcount.
+      if (message?.dismissReason !== 'dismissed') {
+        return
+      }
+      // A campaign-delivered message has no dismissed delivery metric; only
+      // anonymous broadcasts and embeds meter dismissals, as content events.
+      if (typeof deliveryId !== 'undefined' && deliveryId !== '') {
+        return
+      }
+      const { contentId, templateId } = resolveContentIds(message)
+      if (contentId) {
+        void _analytics.track(JourneysEvents.Content, {
+          actionType: JourneysEvents.DismissedContent,
+          contentId: contentId,
+          templateId: templateId,
+          contentType: ContentType,
+        })
+      }
+    })
 
     Gist.events.on('messageShown', (message: any) => {
       const deliveryId: string = message?.properties?.gist?.campaignId
