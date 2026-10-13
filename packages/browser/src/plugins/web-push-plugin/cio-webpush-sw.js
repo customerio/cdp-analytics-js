@@ -102,13 +102,30 @@ self.addEventListener('push', (event) => {
           if (actions.length === 2) break
         }
       }
+      const options = {}
+      for (const key of [
+        'requireInteraction',
+        'silent',
+        'tag',
+        'renotify',
+        'vibrate',
+        'lang',
+        'dir',
+        'timestamp',
+      ]) {
+        if (payload[key] !== undefined) options[key] = payload[key]
+      }
       const data = {
+        ...(payload.custom_data !== undefined
+          ? { custom_data: payload.custom_data }
+          : {}),
         link: payload.link,
         actions,
         delivery_id: payload['CIO-Delivery-ID'],
         device_id: payload['CIO-Delivery-Token'],
       }
       await self.registration.showNotification(payload.title || 'Customer.io', {
+        ...options,
         body: payload.body,
         image: payload.image,
         icon: payload.icon,
@@ -116,10 +133,101 @@ self.addEventListener('push', (event) => {
         actions: actions.map(({ action, title }) => ({ action, title })),
         data,
       })
-      await metric(data, 'delivered')
+      await Promise.all([
+        metric(data, 'delivered'),
+        appBadge(payload.app_badge),
+        received(data),
+      ])
     })()
   )
 })
+
+async function appBadge(count) {
+  if (!Number.isInteger(count) || count < 0 || count > 99999) return
+  try {
+    if (count === 0) await self.navigator?.clearAppBadge?.()
+    else await self.navigator?.setAppBadge?.(count)
+  } catch (error) {
+    console.warn('Customer.io web push app badge failed:', error)
+  }
+}
+
+async function received(data) {
+  try {
+    const pages = await self.clients.matchAll({ type: 'window' })
+    for (const page of pages)
+      page.postMessage({
+        type: 'cio-webpush-received',
+        deliveryId: data.delivery_id,
+        customData: data.custom_data,
+      })
+  } catch (error) {
+    console.warn('Customer.io web push received handoff failed:', error)
+  }
+}
+
+// A newly opened page may not have loaded the plugin yet. Keep the click alive
+// until its message listener is ready, bounded to avoid retaining a worker for
+// destinations without the plugin. Probe also handles already-open pages.
+const pendingClicks = new Map()
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'cio-webpush-ready') return
+  const pending = pendingClicks.get(event.source?.id)
+  if (!pending) return
+  for (const entry of [...pending]) {
+    if (event.source.url === entry.url) entry.finish(true)
+  }
+})
+
+function clickWhenReady(page, message) {
+  return new Promise((resolve) => {
+    const pending = pendingClicks.get(page.id) || new Set()
+    pendingClicks.set(page.id, pending)
+    const entry = {
+      url: page.url,
+      finish: (ready) => {
+        clearTimeout(timer)
+        pending.delete(entry)
+        if (!pending.size) pendingClicks.delete(page.id)
+        try {
+          if (ready) page.postMessage(message)
+        } catch (error) {
+          console.warn('Customer.io web push click handoff failed:', error)
+        }
+        resolve()
+      },
+    }
+    const timer = setTimeout(() => entry.finish(false), 10000)
+    pending.add(entry)
+    try {
+      page.postMessage({ type: 'cio-webpush-check-ready' })
+    } catch {
+      entry.finish(false)
+    }
+  })
+}
+
+async function handoff(opened, url, data, action) {
+  try {
+    const page = await opened
+    const pages = await self.clients.matchAll({ type: 'window' })
+    const targets = pages.filter((client) => client.url === url)
+    if (page?.url === url && !targets.some((client) => client.id === page.id))
+      targets.push(page)
+    await Promise.all(
+      targets.map((client) =>
+        clickWhenReady(client, {
+          type: 'cio-webpush-click',
+          deliveryId: data.delivery_id,
+          action: action || '',
+          customData: data.custom_data,
+        })
+      )
+    )
+  } catch (error) {
+    console.warn('Customer.io web push click handoff failed:', error)
+  }
+}
 
 function safeLink(value) {
   if (typeof value !== 'string' || !value.trim()) return
@@ -142,11 +250,17 @@ self.addEventListener('notificationclick', (event) => {
     ? data.actions.find((entry) => entry && entry.action === event.action)
     : undefined
   // Start navigation in the click gesture, without waiting for Track or pushManager.
+  const url = safeLink(action?.url) || safeLink(data.link) || '/'
+  const openedMetric = metric(data, 'opened', event.action)
+  const opened = self.clients.openWindow(url)
   event.waitUntil(
     Promise.all([
-      metric(data, 'opened', event.action),
-      self.clients.openWindow(
-        safeLink(action?.url) || safeLink(data.link) || '/'
+      openedMetric,
+      handoff(
+        opened,
+        new URL(url, self.location.origin).href,
+        data,
+        event.action
       ),
     ])
   )

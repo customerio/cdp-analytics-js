@@ -47,6 +47,8 @@ function createWorker(
     fetch,
     URL,
     Date,
+    setTimeout,
+    clearTimeout,
     AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
     console: { warn: jest.fn() },
   })
@@ -69,6 +71,7 @@ function createWorker(
     openWindow,
     postMessage,
     pushManager,
+    clients: self.clients,
   }
 }
 
@@ -79,6 +82,239 @@ describe('cio-webpush-sw.js', () => {
     'CIO-Delivery-Token': 'endpoint',
   }
   const notificationMarkers = { delivery_id: 'delivery', device_id: 'endpoint' }
+
+  test.each([
+    ['requireInteraction', true],
+    ['requireInteraction', false],
+    ['silent', true],
+    ['silent', false],
+    ['tag', 'order:123'],
+    ['renotify', true],
+    ['renotify', false],
+    ['vibrate', [100, 0, 200]],
+    ['lang', 'en-US'],
+    ['dir', 'auto'],
+    ['dir', 'ltr'],
+    ['dir', 'rtl'],
+    ['timestamp', 1700000000000],
+    ['timestamp', 0],
+  ])('passes %s = %j to showNotification', async (field, value) => {
+    const s = setup()
+    await s.invoke('push', {
+      data: { json: () => ({ ...relayMarkers, [field as string]: value }) },
+    })
+    expect(s.showNotification.mock.calls[0][1][field as string]).toEqual(value)
+  })
+
+  test.each([1, 99999, 0])('sets or clears app_badge %i', async (count) => {
+    const navigator = {
+      setAppBadge: jest.fn().mockResolvedValue(undefined),
+      clearAppBadge: jest.fn().mockResolvedValue(undefined),
+    }
+    const s = createWorker(worker, undefined, { navigator })
+    await s.invoke('push', {
+      data: { json: () => ({ ...relayMarkers, app_badge: count }) },
+    })
+    if (count === 0) {
+      expect(navigator.clearAppBadge).toHaveBeenCalledTimes(1)
+      expect(navigator.setAppBadge).not.toHaveBeenCalled()
+    } else {
+      expect(navigator.setAppBadge).toHaveBeenCalledWith(count)
+      expect(navigator.clearAppBadge).not.toHaveBeenCalled()
+    }
+    expect(s.showNotification.mock.calls[0][1]).not.toHaveProperty('app_badge')
+  })
+
+  test.each([undefined, -1, 100000, 1.5, '5', null])(
+    'does not badge for absent or invalid count %j',
+    async (count) => {
+      const navigator = { setAppBadge: jest.fn(), clearAppBadge: jest.fn() }
+      const s = createWorker(worker, undefined, { navigator })
+      await s.invoke('push', {
+        data: { json: () => ({ ...relayMarkers, app_badge: count }) },
+      })
+      expect(navigator.setAppBadge).not.toHaveBeenCalled()
+      expect(navigator.clearAppBadge).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([
+    {},
+    {
+      setAppBadge: jest.fn().mockRejectedValue(new Error('unsupported')),
+      clearAppBadge: jest.fn().mockRejectedValue(new Error('unsupported')),
+    },
+  ])(
+    'badge support and failures do not block delivery: %j',
+    async (navigator) => {
+      const s = createWorker(worker, undefined, { navigator })
+      for (const count of [0, 3]) {
+        await s.invoke('push', {
+          data: { json: () => ({ ...relayMarkers, app_badge: count }) },
+        })
+      }
+      expect(s.showNotification).toHaveBeenCalledTimes(2)
+      expect(s.fetch).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  test('push stores custom data and notifies controlled open clients', async () => {
+    const s = setup()
+    const custom_data = { orderId: '123', nested: { items: [1, 2] } }
+    await s.invoke('push', {
+      data: { json: () => ({ ...relayMarkers, custom_data }) },
+    })
+    expect(s.showNotification.mock.calls[0][1].data.custom_data).toEqual(
+      custom_data
+    )
+    expect(s.clients.matchAll).toHaveBeenCalledWith({ type: 'window' })
+    expect(s.postMessage).toHaveBeenCalledWith({
+      type: 'cio-webpush-received',
+      deliveryId: 'delivery',
+      customData: custom_data,
+    })
+  })
+
+  test.each(['existing', 'opened'])(
+    'hands click to %s page once plugin is ready',
+    async (kind) => {
+      const s = setup()
+      const custom_data = { orderId: '123' }
+      const page = {
+        id: 'page',
+        url: 'https://example.com/orders/123',
+        postMessage: jest.fn(),
+      }
+      s.clients.matchAll.mockResolvedValue(kind === 'existing' ? [page] : [])
+      s.openWindow.mockResolvedValue(page)
+      let finished = false
+      const task = s
+        .invoke('notificationclick', {
+          action: 'view',
+          notification: {
+            close: jest.fn(),
+            data: {
+              ...notificationMarkers,
+              custom_data,
+              link: '/orders',
+              actions: [{ action: 'view', url: page.url }],
+            },
+          },
+        })
+        .then(() => {
+          finished = true
+        })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(finished).toBe(false)
+      expect(page.postMessage).toHaveBeenCalledWith({
+        type: 'cio-webpush-check-ready',
+      })
+      await s.invoke('message', {
+        source: { id: 'other', url: page.url },
+        data: { type: 'cio-webpush-ready' },
+      })
+      expect(page.postMessage).toHaveBeenCalledTimes(1)
+      await s.invoke('message', {
+        source: page,
+        data: { type: 'cio-webpush-ready' },
+      })
+      await task
+      expect(page.postMessage).toHaveBeenLastCalledWith({
+        type: 'cio-webpush-click',
+        deliveryId: 'delivery',
+        action: 'view',
+        customData: custom_data,
+      })
+      expect(page.postMessage).toHaveBeenCalledTimes(2)
+      expect(JSON.parse(s.fetch.mock.calls[0][1].body).event).toBe('opened')
+    }
+  )
+
+  test('hands body clicks to all matching clients, never an unrelated URL', async () => {
+    const s = setup()
+    const pages = ['a', 'b', 'other'].map((id) => ({
+      id,
+      url: `https://example.com/${id === 'other' ? 'private' : 'orders'}`,
+      postMessage: jest.fn(),
+    }))
+    s.clients.matchAll.mockResolvedValue(pages)
+    const task = s.invoke('notificationclick', {
+      action: '',
+      notification: {
+        close: jest.fn(),
+        data: { ...notificationMarkers, link: '/orders' },
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    for (const page of pages)
+      await s.invoke('message', {
+        source: page,
+        data: { type: 'cio-webpush-ready' },
+      })
+    await task
+    for (const page of pages.slice(0, 2))
+      expect(page.postMessage).toHaveBeenLastCalledWith({
+        type: 'cio-webpush-click',
+        deliveryId: 'delivery',
+        action: '',
+        customData: undefined,
+      })
+    expect(pages[2].postMessage).not.toHaveBeenCalled()
+  })
+
+  test('no accessible client still navigates and reports opened', async () => {
+    const s = setup()
+    s.clients.matchAll.mockResolvedValue([])
+    s.openWindow.mockResolvedValue(null)
+    await s.invoke('notificationclick', {
+      notification: {
+        close: jest.fn(),
+        data: {
+          ...notificationMarkers,
+          link: 'https://other.example/orders',
+          custom_data: { orderId: '123' },
+        },
+      },
+    })
+    expect(s.openWindow).toHaveBeenCalledWith('https://other.example/orders')
+    expect(s.postMessage).not.toHaveBeenCalled()
+    expect(JSON.parse(s.fetch.mock.calls[0][1].body).event).toBe('opened')
+  })
+
+  test('readiness is bounded and a navigated client does not receive custom data', async () => {
+    jest.useFakeTimers()
+    try {
+      const s = setup()
+      const page = {
+        id: 'page',
+        url: 'https://example.com/orders',
+        postMessage: jest.fn(),
+      }
+      s.openWindow.mockResolvedValue(page)
+      s.clients.matchAll.mockResolvedValue([])
+      const task = s.invoke('notificationclick', {
+        notification: {
+          close: jest.fn(),
+          data: { ...notificationMarkers, link: '/orders' },
+        },
+      })
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+      expect(page.postMessage).toHaveBeenCalledTimes(1)
+      await s.invoke('message', {
+        source: { ...page, url: 'https://example.com/elsewhere' },
+        data: { type: 'cio-webpush-ready' },
+      })
+      jest.advanceTimersByTime(10000)
+      await task
+      await s.invoke('message', {
+        source: page,
+        data: { type: 'cio-webpush-ready' },
+      })
+      expect(page.postMessage).toHaveBeenCalledTimes(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
 
   test('install and activate take over the page by default', async () => {
     const s = setup()
@@ -124,7 +360,7 @@ describe('cio-webpush-sw.js', () => {
             { action: 'later', title: 'Later' },
             { action: 'third', title: 'Third' },
           ],
-          custom_data: { ignored: true },
+          custom_data: { orderId: '123' },
           unknown: true,
           link: '/destination',
           'CIO-Delivery-ID': 'delivery',
@@ -142,6 +378,7 @@ describe('cio-webpush-sw.js', () => {
         { action: 'later', title: 'Later' },
       ],
       data: {
+        custom_data: { orderId: '123' },
         link: '/destination',
         actions: [
           { action: 'view', title: 'View', url: 'https://example.com/view' },

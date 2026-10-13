@@ -15,7 +15,30 @@ export interface WebPushPluginSettings {
   enabled?: boolean
 }
 
+export interface WebPushClickEvent {
+  type: 'cio-webpush-click'
+  deliveryId: string
+  /** Empty string for a notification body click. */
+  action: string
+  customData?: Record<string, unknown>
+}
+
+export interface WebPushReceivedEvent {
+  type: 'cio-webpush-received'
+  deliveryId: string
+  customData?: Record<string, unknown>
+}
+
+declare global {
+  interface WindowEventMap {
+    'cio:webpush:click': CustomEvent<WebPushClickEvent>
+    'cio-webpush-received': CustomEvent<WebPushReceivedEvent>
+  }
+}
+
 export interface WebPushAPI {
+  /** Returns a function that removes this click listener. */
+  onClick(callback: (event: WebPushClickEvent) => void): () => void
   requestPermission(): Promise<NotificationPermission>
   subscribe(opts?: {
     vapidPublicKey?: string
@@ -235,11 +258,52 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       console.warn('Customer.io web push:', error)
     )
   }
+  const clickListeners = new Set<(event: WebPushClickEvent) => void>()
+  const ready = (worker?: ServiceWorker | null) =>
+    worker?.postMessage({ type: 'cio-webpush-ready' })
+  const controllerchange = () => ready(serviceWorker?.controller)
   const message = (event: MessageEvent) => {
     if (event.data?.type === 'cio-webpush-subscriptionchange')
       background(reconcile(true))
+    if (event.data?.type === 'cio-webpush-check-ready')
+      ready(event.source as ServiceWorker | null)
+    if (
+      typeof event.data?.deliveryId !== 'string' ||
+      (event.data.customData !== undefined &&
+        (!event.data.customData ||
+          typeof event.data.customData !== 'object' ||
+          Array.isArray(event.data.customData)))
+    )
+      return
+    if (
+      event.data.type === 'cio-webpush-click' &&
+      typeof event.data.action === 'string'
+    ) {
+      const detail: WebPushClickEvent = {
+        type: 'cio-webpush-click',
+        deliveryId: event.data.deliveryId,
+        action: event.data.action,
+        customData: event.data.customData,
+      }
+      window.dispatchEvent(new CustomEvent('cio:webpush:click', { detail }))
+      clickListeners.forEach((callback) => {
+        try {
+          callback(detail)
+        } catch (error) {
+          console.warn('Customer.io web push click callback failed:', error)
+        }
+      })
+    }
+    if (event.data.type === 'cio-webpush-received')
+      window.dispatchEvent(
+        new CustomEvent('cio-webpush-received', { detail: event.data })
+      )
   }
   const api: WebPushAPI = {
+    onClick: (callback) => {
+      clickListeners.add(callback)
+      return () => clickListeners.delete(callback)
+    },
     requestPermission: async () => {
       supported()
       return Notification.requestPermission()
@@ -424,6 +488,8 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       window.addEventListener('pagehide', pagehide)
       if (serviceWorker) {
         serviceWorker.addEventListener('message', message)
+        serviceWorker.addEventListener('controllerchange', controllerchange)
+        controllerchange()
         // Only inspect an existing subscription; loading never registers or prompts.
         if ('PushManager' in window && 'Notification' in window)
           background(reconcile())
@@ -436,6 +502,8 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       analytics?.off('reset', reset)
       window.removeEventListener('pagehide', pagehide)
       serviceWorker?.removeEventListener('message', message)
+      serviceWorker?.removeEventListener('controllerchange', controllerchange)
+      clickListeners.clear()
       if (analytics?.webPush === api) delete analytics.webPush
       return Promise.resolve()
     },

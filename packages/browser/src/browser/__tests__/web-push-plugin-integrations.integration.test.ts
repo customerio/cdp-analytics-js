@@ -28,6 +28,7 @@ test('load options attach the typed webPush API without a remote integration', a
     }
   )
   expect(analytics.webPush).toEqual({
+    onClick: expect.any(Function),
     requestPermission: expect.any(Function),
     subscribe: expect.any(Function),
     unsubscribe: expect.any(Function),

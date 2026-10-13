@@ -83,6 +83,132 @@ function setup(userId: string | null = 'person') {
 
 beforeEach(() => localStorage.clear())
 
+test('click messages dispatch typed CustomEvents and removable onClick callbacks', async () => {
+  const s = setup()
+  await s.load()
+  const listener = s.sw.addEventListener.mock.calls.find(
+    ([name]) => name === 'message'
+  )![1]
+  const callback = jest.fn()
+  const other = jest.fn()
+  const eventListener = jest.fn()
+  window.addEventListener('cio:webpush:click', eventListener)
+  const remove = s.analytics.webPush!.onClick(callback)
+  s.analytics.webPush!.onClick(other)
+  const detail = {
+    type: 'cio-webpush-click',
+    deliveryId: 'delivery',
+    action: 'view',
+    customData: { orderId: '123', nested: { items: [1, 2] } },
+  }
+  listener({ data: detail })
+  expect(callback).toHaveBeenCalledWith(detail)
+  expect(other).toHaveBeenCalledWith(detail)
+  expect(eventListener.mock.calls[0][0].detail).toEqual(detail)
+  remove()
+  listener({ data: { ...detail, action: '', customData: undefined } })
+  expect(callback).toHaveBeenCalledTimes(1)
+  expect(other).toHaveBeenLastCalledWith({
+    ...detail,
+    action: '',
+    customData: undefined,
+  })
+  await s.plugin.unload?.(Context.system(), s.analytics)
+  expect(s.sw.removeEventListener).toHaveBeenCalledWith('message', listener)
+  listener({ data: detail })
+  expect(other).toHaveBeenCalledTimes(2)
+  window.removeEventListener('cio:webpush:click', eventListener)
+})
+
+test('a failing click callback does not prevent other callbacks', async () => {
+  const s = setup()
+  await s.load()
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+  const callback = jest.fn()
+  s.analytics.webPush!.onClick(() => {
+    throw new Error('app callback')
+  })
+  s.analytics.webPush!.onClick(callback)
+  const listener = s.sw.addEventListener.mock.calls[0][1]
+  listener({
+    data: { type: 'cio-webpush-click', deliveryId: 'delivery', action: '' },
+  })
+  expect(callback).toHaveBeenCalledTimes(1)
+  warn.mockRestore()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('plugin announces readiness on load, controller changes, and worker probes', async () => {
+  const s = setup()
+  const controller = { postMessage: jest.fn() }
+  Object.assign(s.sw, { controller })
+  await s.load()
+  expect(controller.postMessage).toHaveBeenCalledWith({
+    type: 'cio-webpush-ready',
+  })
+  const changed = s.sw.addEventListener.mock.calls.find(
+    ([name]) => name === 'controllerchange'
+  )![1]
+  changed()
+  expect(controller.postMessage).toHaveBeenCalledTimes(2)
+  const source = { postMessage: jest.fn() }
+  const listener = s.sw.addEventListener.mock.calls[0][1]
+  listener({ data: { type: 'cio-webpush-check-ready' }, source })
+  expect(source.postMessage).toHaveBeenCalledWith({ type: 'cio-webpush-ready' })
+  await s.plugin.unload?.(Context.system(), s.analytics)
+  expect(s.sw.removeEventListener).toHaveBeenCalledWith(
+    'controllerchange',
+    changed
+  )
+})
+
+test('received messages dispatch to window without invoking click callbacks', async () => {
+  const s = setup()
+  await s.load()
+  const callback = jest.fn()
+  s.analytics.webPush!.onClick(callback)
+  const eventListener = jest.fn()
+  window.addEventListener('cio-webpush-received', eventListener)
+  const detail = {
+    type: 'cio-webpush-received',
+    deliveryId: 'delivery',
+    customData: { orderId: '123' },
+  }
+  s.sw.addEventListener.mock.calls[0][1]({ data: detail })
+  expect(eventListener.mock.calls[0][0].detail).toEqual(detail)
+  expect(callback).not.toHaveBeenCalled()
+  window.removeEventListener('cio-webpush-received', eventListener)
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each([
+  null,
+  {},
+  { type: 'unknown' },
+  { type: 'cio-webpush-click', deliveryId: 1, action: '' },
+  { type: 'cio-webpush-click', deliveryId: 'delivery' },
+  {
+    type: 'cio-webpush-click',
+    deliveryId: 'delivery',
+    action: '',
+    customData: [],
+  },
+  {
+    type: 'cio-webpush-click',
+    deliveryId: 'delivery',
+    action: '',
+    customData: null,
+  },
+])('ignores unrelated or malformed click messages: %j', async (data) => {
+  const s = setup()
+  await s.load()
+  const callback = jest.fn()
+  s.analytics.webPush!.onClick(callback)
+  s.sw.addEventListener.mock.calls[0][1]({ data })
+  expect(callback).not.toHaveBeenCalled()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
 test('reuses a compatible subscription when the browser does not expose its key', async () => {
   const s = setup()
   s.manager.getSubscription.mockResolvedValue(s.subscription)
