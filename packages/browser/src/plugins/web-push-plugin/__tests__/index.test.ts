@@ -1,6 +1,7 @@
 import { Analytics } from '../../../core/analytics'
 import { Context } from '../../../core/context'
 import { WebPushPlugin } from '..'
+import { deviceAttributes } from '../device-attributes'
 
 const key = btoa(String.fromCharCode(4) + 'a'.repeat(64))
 const value = {
@@ -12,6 +13,7 @@ function setup(userId: string | null = 'person') {
   let id = userId
   const listeners: Record<string, (...args: any[]) => void> = {}
   const subscription = {
+    expirationTime: null as number | null,
     endpoint: value.endpoint,
     toJSON: () => value,
     unsubscribe: jest.fn().mockResolvedValue(true),
@@ -82,6 +84,88 @@ function setup(userId: string | null = 'person') {
 }
 
 beforeEach(() => localStorage.clear())
+
+test.each([null, 1800000000123, 0])(
+  'all device registration paths include parsed attributes and expiry %j',
+  async (expirationTime) => {
+    const s = setup()
+    s.subscription.expirationTime = expirationTime
+    const ua = jest
+      .spyOn(navigator, 'userAgent', 'get')
+      .mockReturnValue(
+        'Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0'
+      )
+    try {
+      // Initial subscribe, explicit update, reload reconciliation and
+      // subscription-change all use the same device registration path.
+      await s.load()
+      await s.analytics.webPush!.subscribe()
+      await s.analytics.webPush!.subscribe()
+      s.manager.getSubscription.mockResolvedValue(s.subscription)
+      s.sw.addEventListener.mock.calls[0][1]({
+        data: { type: 'cio-webpush-subscriptionchange' },
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const properties = jest
+        .mocked(s.analytics.track)
+        .mock.calls.filter(([event]) => event === 'Device Created or Updated')
+        .map(([, props]) => props)
+      expect(properties).toHaveLength(3)
+      for (const props of properties) {
+        expect(props).toEqual({
+          webpush_p256dh: value.keys.p256dh,
+          webpush_auth: value.keys.auth,
+          user_agent: navigator.userAgent,
+          browser: 'Firefox',
+          browser_version: '157',
+          os: 'Linux',
+          ...(expirationTime === null
+            ? {}
+            : { webpush_expiration_time: expirationTime }),
+        })
+        if (expirationTime === null)
+          expect(props).not.toHaveProperty('webpush_expiration_time')
+      }
+      await s.plugin.unload?.(Context.system(), s.analytics)
+      // A fresh plugin reload with no stored owner registers the same metadata.
+      localStorage.clear()
+      const reloaded = setup()
+      reloaded.subscription.expirationTime = expirationTime
+      reloaded.manager.getSubscription.mockResolvedValue(reloaded.subscription)
+      await reloaded.load()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(jest.mocked(reloaded.analytics.track).mock.calls[0][1]).toEqual(
+        properties[0]
+      )
+      await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+    } finally {
+      ua.mockRestore()
+    }
+  }
+)
+
+test('registration prefers navigator.userAgentData without requesting high-entropy hints', async () => {
+  const s = setup()
+  Object.defineProperty(navigator, 'userAgentData', {
+    configurable: true,
+    value: {
+      brands: [{ brand: 'Microsoft Edge', version: '154' }],
+      platform: 'Windows',
+    },
+  })
+  try {
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(jest.mocked(s.analytics.track).mock.calls[0][1]).toMatchObject({
+      browser: 'Edge',
+      browser_version: '154',
+      os: 'Windows',
+    })
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  } finally {
+    Reflect.deleteProperty(navigator, 'userAgentData')
+  }
+})
 
 test('click messages dispatch typed CustomEvents and removable onClick callbacks', async () => {
   const s = setup()
@@ -541,6 +625,7 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
       webpush_p256dh: 'p256dh',
       webpush_auth: 'auth',
       user_agent: navigator.userAgent,
+      ...deviceAttributes(navigator),
     },
     {
       userId: 'person',

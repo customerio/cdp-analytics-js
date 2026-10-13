@@ -1,6 +1,7 @@
 import type { Analytics } from '../../core/analytics'
 import type { Plugin } from '../../core/plugin'
 import { getCDN } from '../../lib/parse-cdn'
+import { deviceAttributes } from './device-attributes'
 
 export interface WebPushSubscriptionJSON {
   endpoint: string
@@ -213,6 +214,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   }
   const registerDevice = async (subscription: PushSubscription) => {
     const value = json(subscription)
+    const expirationTime = subscription.expirationTime
     await identity()
     return mutate(async () => {
       // Identity may have been reset while this operation was queued.
@@ -235,6 +237,12 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           webpush_p256dh: value.keys.p256dh,
           webpush_auth: value.keys.auth,
           user_agent: navigator.userAgent,
+          ...deviceAttributes(navigator),
+          ...(typeof expirationTime === 'number' &&
+          Number.isSafeInteger(expirationTime) &&
+          expirationTime >= 0
+            ? { webpush_expiration_time: expirationTime }
+            : {}),
         },
         device(value.endpoint, userId)
       )

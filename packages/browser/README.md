@@ -139,6 +139,30 @@ a user action. Unsupported browsers or denied permission reject `subscribe`.
 Changing VAPID keys invalidates existing subscriptions. Calling `subscribe` with
 the new key unsubscribes and deletes the old device before registering the new one.
 
+### Device attributes
+
+Every `Device Created or Updated` registration (subscribe, updates, and endpoint
+reconciliation) sends these device attributes alongside `webpush_p256dh` and
+`webpush_auth`:
+
+| Attribute                 | Value                                                                                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user_agent`              | Original `navigator.userAgent` (unchanged)                                                                                                     |
+| `webpush_expiration_time` | `PushSubscription.expirationTime` as an integer epoch millisecond timestamp; omitted when null/unknown (common on Chrome, Firefox, and Safari) |
+| `browser`                 | `Chrome`, `Edge`, `Firefox`, `Safari`, `Opera`, `Samsung Internet`, or `Other`                                                                 |
+| `browser_version`         | Major version only, as a string (for example, `'154'`); omitted when unknown                                                                   |
+| `os`                      | `macOS`, `Windows`, `iOS`, `iPadOS`, `Android`, `Linux`, `ChromeOS`, or `Other`                                                                |
+
+These finite browser/OS values support segments without parsing UA strings.
+The tiny built-in parser prefers `navigator.userAgentData` brands and platform
+when available, then falls back to UA tokens. It uses no high-entropy hints or
+third-party parser. Chromium is grouped under Chrome; specific Edge, Opera, and
+Samsung tokens take precedence over generic Chrome tokens. Desktop-mode iPadOS
+is detected using a Macintosh UA plus touch points. iOS Home Screen apps may
+omit a browser version: the worker's WebKit engine version is not a Safari major.
+Unknown expiry means **unknown**, not an expired subscription; omitting it does
+not clear a previously stored attribute.
+
 ### Notification payload
 
 The worker accepts `title`, `body`, optional `image` (large picture), `icon`,

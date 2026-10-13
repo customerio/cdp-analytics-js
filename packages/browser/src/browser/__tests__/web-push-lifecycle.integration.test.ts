@@ -3,6 +3,7 @@ import { AnalyticsBrowser } from '..'
 import type { Analytics } from '../../core/analytics'
 import type { CustomerioEvent } from '../../core/events/interfaces'
 import { createSuccess } from '../../test-helpers/factories'
+import { deviceAttributes } from '../../plugins/web-push-plugin/device-attributes'
 
 jest.mock('unfetch')
 const name = 'Customer.io Web Push Plugin'
@@ -584,6 +585,7 @@ test('identify A → subscribe → reset → identify B deletes A and registers 
     webpush_p256dh: 'p256dh',
     webpush_auth: 'auth',
     user_agent: navigator.userAgent,
+    ...deviceAttributes(navigator),
   })
   expect(events[1].anonymousId).toBeNull()
   expect(events[2].anonymousId).toBe(anonymousId)
