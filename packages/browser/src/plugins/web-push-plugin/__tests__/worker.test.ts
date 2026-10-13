@@ -89,8 +89,7 @@ describe('cio-webpush-sw.js', () => {
     ['silent', true],
     ['silent', false],
     ['tag', 'order:123'],
-    ['renotify', true],
-    ['renotify', false],
+
     ['vibrate', [100, 0, 200]],
     ['lang', 'en-US'],
     ['dir', 'auto'],
@@ -171,6 +170,7 @@ describe('cio-webpush-sw.js', () => {
     expect(s.postMessage).toHaveBeenCalledWith({
       type: 'cio-webpush-received',
       deliveryId: 'delivery',
+      title: 'Customer.io',
       customData: custom_data,
     })
   })
@@ -230,7 +230,7 @@ describe('cio-webpush-sw.js', () => {
     }
   )
 
-  test('hands body clicks to all matching clients, never an unrelated URL', async () => {
+  test('hands body clicks only to the returned client once, not matching tabs', async () => {
     const s = setup()
     const pages = ['a', 'b', 'other'].map((id) => ({
       id,
@@ -238,6 +238,7 @@ describe('cio-webpush-sw.js', () => {
       postMessage: jest.fn(),
     }))
     s.clients.matchAll.mockResolvedValue(pages)
+    s.openWindow.mockResolvedValue(pages[0])
     const task = s.invoke('notificationclick', {
       action: '',
       notification: {
@@ -252,14 +253,20 @@ describe('cio-webpush-sw.js', () => {
         data: { type: 'cio-webpush-ready' },
       })
     await task
-    for (const page of pages.slice(0, 2))
-      expect(page.postMessage).toHaveBeenLastCalledWith({
-        type: 'cio-webpush-click',
-        deliveryId: 'delivery',
-        action: '',
-        customData: undefined,
-      })
+    await s.invoke('message', {
+      source: pages[0],
+      data: { type: 'cio-webpush-ready' },
+    })
+    expect(pages[0].postMessage).toHaveBeenLastCalledWith({
+      type: 'cio-webpush-click',
+      deliveryId: 'delivery',
+      action: '',
+      customData: undefined,
+    })
+    expect(pages[0].postMessage).toHaveBeenCalledTimes(2)
+    expect(pages[1].postMessage).not.toHaveBeenCalled()
     expect(pages[2].postMessage).not.toHaveBeenCalled()
+    expect(s.clients.matchAll).not.toHaveBeenCalled()
   })
 
   test('no accessible client still navigates and reports opened', async () => {
@@ -281,13 +288,13 @@ describe('cio-webpush-sw.js', () => {
     expect(JSON.parse(s.fetch.mock.calls[0][1].body).event).toBe('opened')
   })
 
-  test('readiness is bounded and a navigated client does not receive custom data', async () => {
+  test('redirected and router-navigated clients receive clicks by id once', async () => {
     jest.useFakeTimers()
     try {
       const s = setup()
       const page = {
         id: 'page',
-        url: 'https://example.com/orders',
+        url: 'https://example.com/redirected',
         postMessage: jest.fn(),
       }
       s.openWindow.mockResolvedValue(page)
@@ -310,10 +317,104 @@ describe('cio-webpush-sw.js', () => {
         source: page,
         data: { type: 'cio-webpush-ready' },
       })
+      expect(page.postMessage).toHaveBeenCalledTimes(2)
+      expect(page.postMessage).toHaveBeenLastCalledWith({
+        type: 'cio-webpush-click',
+        deliveryId: 'delivery',
+        action: '',
+        customData: undefined,
+      })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('readiness times out without delivering a late click', async () => {
+    jest.useFakeTimers()
+    try {
+      const s = setup()
+      const page = { id: 'page', postMessage: jest.fn() }
+      s.openWindow.mockResolvedValue(page)
+      const task = s.invoke('notificationclick', {
+        notification: {
+          close: jest.fn(),
+          data: { ...notificationMarkers, link: '/orders' },
+        },
+      })
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+      jest.advanceTimersByTime(10000)
+      await task
+      await s.invoke('message', {
+        source: page,
+        data: { type: 'cio-webpush-ready' },
+      })
       expect(page.postMessage).toHaveBeenCalledTimes(1)
     } finally {
       jest.useRealTimers()
     }
+  })
+
+  test.each([
+    [{ silent: true, vibrate: [100] }, { silent: true }],
+    [{ renotify: true }, {}],
+    [{ renotify: true, tag: '' }, { tag: '' }],
+    [
+      { renotify: true, tag: 'order' },
+      { renotify: true, tag: 'order' },
+    ],
+    [{ dir: 'invalid' }, {}],
+    [
+      {
+        silent: 0,
+        requireInteraction: 1,
+        tag: 123,
+        lang: 42,
+        timestamp: '100',
+        vibrate: ['10', -1, 'bad'],
+      },
+      {
+        silent: false,
+        requireInteraction: true,
+        tag: '123',
+        lang: '42',
+        timestamp: 100,
+        vibrate: [10],
+      },
+    ],
+    [{ timestamp: 'invalid' }, {}],
+    [{ tag: { toString: 0 } }, {}],
+    [{ vibrate: [{ toString: 0, valueOf: 0 }] }, {}],
+  ])('sanitizes notification options %j', async (input, expected) => {
+    const s = setup()
+    s.showNotification.mockImplementation(async (_title, options) => {
+      if (
+        (options.silent && options.vibrate !== undefined) ||
+        (options.renotify && !options.tag) ||
+        (options.dir !== undefined &&
+          !['auto', 'ltr', 'rtl'].includes(options.dir))
+      )
+        throw new TypeError('invalid options')
+    })
+    await s.invoke('push', {
+      data: { json: () => ({ ...relayMarkers, ...input }) },
+    })
+    const options = s.showNotification.mock.calls[0][1]
+    const advanced = Object.fromEntries(
+      Object.entries(options).filter(([key]) =>
+        [
+          'silent',
+          'vibrate',
+          'renotify',
+          'tag',
+          'dir',
+          'lang',
+          'timestamp',
+          'requireInteraction',
+        ].includes(key)
+      )
+    )
+    expect(advanced).toEqual(expected)
+    expect(s.fetch).toHaveBeenCalledTimes(1)
   })
 
   test('install and activate take over the page by default', async () => {

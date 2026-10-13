@@ -125,6 +125,33 @@ async function load() {
   return { analytics, events }
 }
 
+test('real analytics reset/identify suppresses an in-flight previous-user click', async () => {
+  const b = browser()
+  const { analytics } = await load()
+  await analytics.identify('A')
+  await analytics.webPush!.subscribe()
+  const callback = jest.fn()
+  analytics.webPush!.onClick(callback)
+  const listener = b.sw.addEventListener.mock.calls.find(
+    ([name]) => name === 'message'
+  )![1]
+  const message = {
+    data: {
+      type: 'cio-webpush-click',
+      deliveryId: 'delivery',
+      action: '',
+      customData: { owner: 'A' },
+    },
+  }
+  listener(message)
+  expect(callback).toHaveBeenCalledTimes(1)
+  analytics.reset()
+  await analytics.identify('B')
+  await analytics.webPush!.subscribe()
+  listener(message)
+  expect(callback).toHaveBeenCalledTimes(1)
+})
+
 // Each registered scope retains its own browser subscription.
 function scopedBrowser() {
   const createRegistration = (
@@ -260,7 +287,14 @@ test.each(['identify without reset', 'lookup after reload', 'unsubscribe'])(
       ])
       expect(
         JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
-      ).toEqual({ endpoint: b.old.value.endpoint, userId: 'B' })
+      ).toEqual({
+        endpoint: b.old.value.endpoint,
+        userId: 'B',
+        attributesFingerprint: JSON.stringify({
+          ...deviceAttributes(navigator),
+          webpush_expiration_time: null,
+        }),
+      })
     } else if (operation === 'lookup after reload') {
       await first.analytics.deregister(name)
       const reloaded = await load()
@@ -390,7 +424,14 @@ test('a new destination subscription remains reachable when device deletion fail
     JSON.parse(
       localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
     )
-  ).toEqual({ endpoint: b.old.value.endpoint, userId: 'A' })
+  ).toEqual({
+    endpoint: b.old.value.endpoint,
+    userId: 'A',
+    attributesFingerprint: JSON.stringify({
+      ...deviceAttributes(navigator),
+      webpush_expiration_time: null,
+    }),
+  })
   track.mockRestore()
   await first.analytics.deregister(name)
 
@@ -480,6 +521,10 @@ test.each(['same path', 'different path'])(
     expect(JSON.parse(owner!)).toEqual({
       endpoint: newer.value.endpoint,
       userId: 'A',
+      attributesFingerprint: JSON.stringify({
+        ...deviceAttributes(navigator),
+        webpush_expiration_time: null,
+      }),
     })
     rejectSubscription(new Error('push service unavailable'))
     await rejected
@@ -586,13 +631,21 @@ test('identify A → subscribe → reset → identify B deletes A and registers 
     webpush_auth: 'auth',
     user_agent: navigator.userAgent,
     ...deviceAttributes(navigator),
+    webpush_expiration_time: null,
   })
   expect(events[1].anonymousId).toBeNull()
   expect(events[2].anonymousId).toBe(anonymousId)
   expect(analytics.user().anonymousId()).toBe(anonymousId)
   expect(
     JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
-  ).toEqual({ endpoint: 'https://push.example/new', userId: 'B' })
+  ).toEqual({
+    endpoint: 'https://push.example/new',
+    userId: 'B',
+    attributesFingerprint: JSON.stringify({
+      ...deviceAttributes(navigator),
+      webpush_expiration_time: null,
+    }),
+  })
 })
 
 test('delayed deletion of a persisted owner never attaches the new visitor identity', async () => {

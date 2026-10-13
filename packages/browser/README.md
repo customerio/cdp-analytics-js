@@ -145,13 +145,13 @@ Every `Device Created or Updated` registration (subscribe, updates, and endpoint
 reconciliation) sends these device attributes alongside `webpush_p256dh` and
 `webpush_auth`:
 
-| Attribute                 | Value                                                                                                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `user_agent`              | Original `navigator.userAgent` (unchanged)                                                                                                     |
-| `webpush_expiration_time` | `PushSubscription.expirationTime` as an integer epoch millisecond timestamp; omitted when null/unknown (common on Chrome, Firefox, and Safari) |
-| `browser`                 | `Chrome`, `Edge`, `Firefox`, `Safari`, `Opera`, `Samsung Internet`, or `Other`                                                                 |
-| `browser_version`         | Major version only, as a string (for example, `'154'`); omitted when unknown                                                                   |
-| `os`                      | `macOS`, `Windows`, `iOS`, `iPadOS`, `Android`, `Linux`, `ChromeOS`, or `Other`                                                                |
+| Attribute                 | Value                                                                                                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user_agent`              | Original `navigator.userAgent` (unchanged)                                                                                                                           |
+| `webpush_expiration_time` | `PushSubscription.expirationTime` as an integer epoch millisecond timestamp; sent as null to clear stale expiry when unknown (common on Chrome, Firefox, and Safari) |
+| `browser`                 | `Chrome`, `Edge`, `Firefox`, `Safari`, `Opera`, `Samsung Internet`, or `Other`                                                                                       |
+| `browser_version`         | Major version only, as a string (for example, `'154'`); omitted when unknown                                                                                         |
+| `os`                      | `macOS`, `Windows`, `iOS`, `iPadOS`, `Android`, `Linux`, `ChromeOS`, or `Other`                                                                                      |
 
 These finite browser/OS values support segments without parsing UA strings.
 The tiny built-in parser prefers `navigator.userAgentData` brands and platform
@@ -160,8 +160,11 @@ third-party parser. Chromium is grouped under Chrome; specific Edge, Opera, and
 Samsung tokens take precedence over generic Chrome tokens. Desktop-mode iPadOS
 is detected using a Macintosh UA plus touch points. iOS Home Screen apps may
 omit a browser version: the worker's WebKit engine version is not a Safari major.
-Unknown expiry means **unknown**, not an expired subscription; omitting it does
-not clear a previously stored attribute.
+Unknown expiry means **unknown**, not an expired subscription. The plugin sends
+null to clear a previously stored expiry. A persisted fingerprint of browser,
+major version, OS, and expiry triggers re-registration on changes (including
+backfilling devices registered by older SDKs on their next page load). Unchanged
+attributes do not trigger another registration.
 
 ### Notification payload
 
@@ -215,7 +218,10 @@ are passed to `showNotification` only when present:
 
 The relay validates these fields (and converts a rendered ISO timestamp to epoch
 milliseconds). Composer `require_interaction` becomes relay `requireInteraction`.
-The worker does not add defaults when options are absent. Browser/OS support varies;
+The worker does not add defaults when options are absent. It coerces option types,
+drops invalid `dir`/timestamps, drops `vibrate` when silent, and drops `renotify`
+without a nonempty tag. Malformed coercions fall back to base options.
+Browser/OS support varies;
 unsupported notification options may be ignored. `app_badge` is distinct from the
 notification `badge` image: it calls worker `navigator.setAppBadge(count)` or
 `clearAppBadge()` when available. Unsupported or rejected badging does not prevent
@@ -233,12 +239,15 @@ closing a notification sends no metric.
 
 ### Custom data and page events
 
-After starting the opened metric and opening/focusing the click destination, the
-worker sends `{ type: 'cio-webpush-click', deliveryId, action, customData }` to
-controlled open clients at that exact URL and to the client returned by
-`openWindow`. `action` is the button ID, or `''` for a body click; `customData` is
-`undefined` when absent. The plugin dispatches the same detail in a window
-`CustomEvent` and invokes click callbacks:
+After starting the opened metric, the worker calls `openWindow` to open the click
+destination (the browser may reuse/focus an existing window). It hands the click
+only to that returned same-origin client, once, matching readiness by client ID
+rather than URL so redirects and router URL changes work. Other matching tabs
+receive no click. The plugin dispatches `{ deliveryId, action, customData }` in a
+`cio:webpush:click` window `CustomEvent` and invokes click callbacks. `action` is
+the button ID, or `''` for a body click; `customData` is `undefined` when absent
+or malformed (malformed data is logged once per plugin instance). Worker
+postMessage type names are private implementation details:
 
 ```ts
 const stop = analytics.webPush!.onClick(
@@ -259,18 +268,24 @@ include these APIs; window event names are typed through `WindowEventMap`.
 Register handlers during page initialization, including on destinations opened
 by a click. The worker waits up to 10 seconds for the plugin's readiness handshake
 so a newly opened page can install its message listener. No click data is handed
-to unrelated URLs. If no accessible client exists (for example, a cross-origin
+to any tab except the client returned by `openWindow`. If no accessible client exists (for example, a cross-origin
 destination), or the plugin does not load in time, navigation and metrics still
 work but there is no page callback. The handoff is best-effort, not durable storage.
 Unloading the plugin removes its message listeners and click callbacks.
 
-On push, the worker also posts
-`{ type: 'cio-webpush-received', deliveryId, customData }` to controlled open
-window clients. The plugin dispatches a window `CustomEvent` named
-`cio-webpush-received` with that detail; it does not change page UI:
+Delivery payloads do not identify the original user. To avoid handing an old
+user's in-flight data to a new identity, reset or an identity change since
+registration suppresses click and received handoffs for the rest of that plugin
+instance, even after re-registration. A fresh instance can resume under its
+current registered identity; this guard cannot identify old deliveries after a
+reload. Notifications and metrics still work. Do not put secrets in custom data.
+
+On push, the worker also notifies controlled open window clients. The plugin
+dispatches `cio:webpush:received` with a cleaned `{ deliveryId, title, customData }`
+detail, not the raw worker payload; it does not change page UI:
 
 ```ts
-window.addEventListener('cio-webpush-received', (event) => {
+window.addEventListener('cio:webpush:received', (event) => {
   console.log(event.detail.deliveryId, event.detail.customData)
 })
 ```

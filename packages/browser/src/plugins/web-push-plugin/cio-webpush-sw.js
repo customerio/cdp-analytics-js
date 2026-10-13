@@ -103,17 +103,35 @@ self.addEventListener('push', (event) => {
         }
       }
       const options = {}
-      for (const key of [
-        'requireInteraction',
-        'silent',
-        'tag',
-        'renotify',
-        'vibrate',
-        'lang',
-        'dir',
-        'timestamp',
-      ]) {
-        if (payload[key] !== undefined) options[key] = payload[key]
+      try {
+        for (const key of ['requireInteraction', 'silent', 'renotify']) {
+          if (payload[key] !== undefined) options[key] = Boolean(payload[key])
+        }
+        for (const key of ['tag', 'lang']) {
+          if (payload[key] !== undefined) options[key] = String(payload[key])
+        }
+        if (['auto', 'ltr', 'rtl'].includes(payload.dir))
+          options.dir = payload.dir
+        if (payload.timestamp !== undefined) {
+          const timestamp = Number(payload.timestamp)
+          if (Number.isSafeInteger(timestamp) && timestamp >= 0)
+            options.timestamp = timestamp
+        }
+        if (!options.silent && payload.vibrate !== undefined) {
+          const pattern = Array.isArray(payload.vibrate)
+            ? payload.vibrate
+            : [payload.vibrate]
+          options.vibrate = pattern
+            .map(Number)
+            .filter((value) => Number.isInteger(value) && value >= 0)
+            .map((value) => Math.min(value, 4294967295))
+        }
+        if (!options.tag) delete options.renotify
+      } catch (error) {
+        // Even malformed JSON objects with shadowed coercion methods must not
+        // prevent the base notification from being shown.
+        for (const key of Object.keys(options)) delete options[key]
+        console.warn('Customer.io web push: ignoring malformed options.', error)
       }
       const data = {
         ...(payload.custom_data !== undefined
@@ -136,7 +154,7 @@ self.addEventListener('push', (event) => {
       await Promise.all([
         metric(data, 'delivered'),
         appBadge(payload.app_badge),
-        received(data),
+        received(data, payload.title || 'Customer.io'),
       ])
     })()
   )
@@ -152,13 +170,14 @@ async function appBadge(count) {
   }
 }
 
-async function received(data) {
+async function received(data, title) {
   try {
     const pages = await self.clients.matchAll({ type: 'window' })
     for (const page of pages)
       page.postMessage({
         type: 'cio-webpush-received',
         deliveryId: data.delivery_id,
+        title,
         customData: data.custom_data,
       })
   } catch (error) {
@@ -174,9 +193,7 @@ self.addEventListener('message', (event) => {
   if (event.data?.type !== 'cio-webpush-ready') return
   const pending = pendingClicks.get(event.source?.id)
   if (!pending) return
-  for (const entry of [...pending]) {
-    if (event.source.url === entry.url) entry.finish(true)
-  }
+  for (const entry of [...pending]) entry.finish(true)
 })
 
 function clickWhenReady(page, message) {
@@ -184,7 +201,6 @@ function clickWhenReady(page, message) {
     const pending = pendingClicks.get(page.id) || new Set()
     pendingClicks.set(page.id, pending)
     const entry = {
-      url: page.url,
       finish: (ready) => {
         clearTimeout(timer)
         pending.delete(entry)
@@ -207,23 +223,18 @@ function clickWhenReady(page, message) {
   })
 }
 
-async function handoff(opened, url, data, action) {
+async function handoff(opened, data, action) {
   try {
+    // openWindow returns only an accessible same-origin client. Its URL may
+    // already have changed through a redirect or client-side routing.
     const page = await opened
-    const pages = await self.clients.matchAll({ type: 'window' })
-    const targets = pages.filter((client) => client.url === url)
-    if (page?.url === url && !targets.some((client) => client.id === page.id))
-      targets.push(page)
-    await Promise.all(
-      targets.map((client) =>
-        clickWhenReady(client, {
-          type: 'cio-webpush-click',
-          deliveryId: data.delivery_id,
-          action: action || '',
-          customData: data.custom_data,
-        })
-      )
-    )
+    if (!page) return
+    await clickWhenReady(page, {
+      type: 'cio-webpush-click',
+      deliveryId: data.delivery_id,
+      action: action || '',
+      customData: data.custom_data,
+    })
   } catch (error) {
     console.warn('Customer.io web push click handoff failed:', error)
   }
@@ -254,15 +265,7 @@ self.addEventListener('notificationclick', (event) => {
   const openedMetric = metric(data, 'opened', event.action)
   const opened = self.clients.openWindow(url)
   event.waitUntil(
-    Promise.all([
-      openedMetric,
-      handoff(
-        opened,
-        new URL(url, self.location.origin).href,
-        data,
-        event.action
-      ),
-    ])
+    Promise.all([openedMetric, handoff(opened, data, event.action)])
   )
 })
 

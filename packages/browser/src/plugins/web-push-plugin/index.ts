@@ -17,7 +17,6 @@ export interface WebPushPluginSettings {
 }
 
 export interface WebPushClickEvent {
-  type: 'cio-webpush-click'
   deliveryId: string
   /** Empty string for a notification body click. */
   action: string
@@ -25,15 +24,15 @@ export interface WebPushClickEvent {
 }
 
 export interface WebPushReceivedEvent {
-  type: 'cio-webpush-received'
   deliveryId: string
+  title: string
   customData?: Record<string, unknown>
 }
 
 declare global {
   interface WindowEventMap {
     'cio:webpush:click': CustomEvent<WebPushClickEvent>
-    'cio-webpush-received': CustomEvent<WebPushReceivedEvent>
+    'cio:webpush:received': CustomEvent<WebPushReceivedEvent>
   }
 }
 
@@ -110,7 +109,16 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     new URL(workerUrl, location.href).pathname
   }`
   let serviceWorker: ServiceWorkerContainer | undefined
-  type Device = { endpoint: string; userId: string | null }
+  type Device = {
+    endpoint: string
+    userId: string | null
+    attributesFingerprint?: string
+  }
+  // Without a delivery-owner marker, an identity transition makes an in-flight
+  // handoff ambiguous. Fail closed for the rest of this plugin instance.
+  let handoffOwner: string | null | undefined
+  let identityChanged = false
+  let warnedCustomData = false
   let memory: Device | null = null
   const storageKey = () =>
     `cio-webpush:${new URL(workerUrl, location.href).pathname}`
@@ -144,6 +152,8 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   }
   const pending = new Set<(error?: Error) => void>()
   const identified = () => {
+    if (handoffOwner && handoffOwner !== analytics.user().id())
+      identityChanged = true
     if (analytics.user().id()) {
       pending.forEach((finish) => finish())
       const previous = stored()
@@ -203,6 +213,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       )
   }
   const reset = () => {
+    identityChanged = true
     background(
       mutate(async () => {
         const previous = stored()
@@ -212,9 +223,18 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       })
     )
   }
+  const attributes = (subscription: PushSubscription) => ({
+    ...deviceAttributes(navigator),
+    webpush_expiration_time:
+      typeof subscription.expirationTime === 'number' &&
+      Number.isSafeInteger(subscription.expirationTime) &&
+      subscription.expirationTime >= 0
+        ? subscription.expirationTime
+        : null,
+  })
   const registerDevice = async (subscription: PushSubscription) => {
     const value = json(subscription)
-    const expirationTime = subscription.expirationTime
+    const metadata = attributes(subscription)
     await identity()
     return mutate(async () => {
       // Identity may have been reset while this operation was queued.
@@ -237,16 +257,16 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           webpush_p256dh: value.keys.p256dh,
           webpush_auth: value.keys.auth,
           user_agent: navigator.userAgent,
-          ...deviceAttributes(navigator),
-          ...(typeof expirationTime === 'number' &&
-          Number.isSafeInteger(expirationTime) &&
-          expirationTime >= 0
-            ? { webpush_expiration_time: expirationTime }
-            : {}),
+          ...metadata,
         },
         device(value.endpoint, userId)
       )
-      save({ endpoint: value.endpoint, userId })
+      if (handoffOwner === undefined) handoffOwner = userId
+      save({
+        endpoint: value.endpoint,
+        userId,
+        attributesFingerprint: JSON.stringify(metadata),
+      })
       return value
     })
   }
@@ -257,7 +277,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       subscription &&
       (force ||
         previous?.endpoint !== subscription.endpoint ||
-        previous?.userId !== analytics.user().id())
+        previous?.userId !== analytics.user().id() ||
+        previous?.attributesFingerprint !==
+          JSON.stringify(attributes(subscription)))
     )
       await registerDevice(subscription)
   }
@@ -275,23 +297,34 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       background(reconcile(true))
     if (event.data?.type === 'cio-webpush-check-ready')
       ready(event.source as ServiceWorker | null)
+    if (typeof event.data?.deliveryId !== 'string') return
     if (
-      typeof event.data?.deliveryId !== 'string' ||
-      (event.data.customData !== undefined &&
-        (!event.data.customData ||
-          typeof event.data.customData !== 'object' ||
-          Array.isArray(event.data.customData)))
+      identityChanged ||
+      (handoffOwner && handoffOwner !== analytics.user().id())
     )
       return
+    let customData = event.data.customData
+    if (
+      customData !== undefined &&
+      (!customData ||
+        typeof customData !== 'object' ||
+        Array.isArray(customData) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(customData)))
+    ) {
+      customData = undefined
+      if (!warnedCustomData) {
+        warnedCustomData = true
+        console.warn('Customer.io web push: ignoring malformed custom data.')
+      }
+    }
     if (
       event.data.type === 'cio-webpush-click' &&
       typeof event.data.action === 'string'
     ) {
       const detail: WebPushClickEvent = {
-        type: 'cio-webpush-click',
         deliveryId: event.data.deliveryId,
         action: event.data.action,
-        customData: event.data.customData,
+        customData,
       }
       window.dispatchEvent(new CustomEvent('cio:webpush:click', { detail }))
       clickListeners.forEach((callback) => {
@@ -302,10 +335,14 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         }
       })
     }
-    if (event.data.type === 'cio-webpush-received')
-      window.dispatchEvent(
-        new CustomEvent('cio-webpush-received', { detail: event.data })
-      )
+    if (event.data.type === 'cio-webpush-received') {
+      const detail: WebPushReceivedEvent = {
+        deliveryId: event.data.deliveryId,
+        title: typeof event.data.title === 'string' ? event.data.title : '',
+        customData,
+      }
+      window.dispatchEvent(new CustomEvent('cio:webpush:received', { detail }))
+    }
   }
   const api: WebPushAPI = {
     onClick: (callback) => {
@@ -490,6 +527,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       } catch {
         /* Persistence is optional in private browsing. */
       }
+      handoffOwner = stored()?.userId ?? analytics.user().id() ?? undefined
+      if (handoffOwner && handoffOwner !== analytics.user().id())
+        identityChanged = true
       analytics.webPush = api
       analytics.on('identify', identified)
       analytics.on('reset', reset)
