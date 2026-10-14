@@ -86,10 +86,28 @@ function mutex(key: string, onUnlock: Function, attempt = 0): void {
 }
 
 export class PersistedPriorityQueue extends PriorityQueue<Context> {
+  private readonly itemsKey: string
+
+  remove(predicate: (item: Context) => boolean): Context[] {
+    const removed = super.remove(predicate)
+    try {
+      const saved = persisted(this.itemsKey)
+      removed.push(...saved.filter(predicate))
+      loc.setItem(
+        this.itemsKey,
+        JSON.stringify(saved.filter((item) => !predicate(item)))
+      )
+    } catch {
+      // Destination send-time supersession also protects persisted retries.
+    }
+    return removed
+  }
+
   constructor(maxAttempts: number, key: string) {
     super(maxAttempts, [])
 
     const itemsKey = `persisted-queue:v1:${key}:items`
+    this.itemsKey = itemsKey
     const seenKey = `persisted-queue:v1:${key}:seen`
 
     let saved: Context[] = []

@@ -12,6 +12,7 @@ import standard, { StandardDispatcherConfig } from './fetch-dispatcher'
 import { normalize } from './normalize'
 import { scheduleFlush } from './schedule-flush'
 import { acceptDevice, isDeviceEvent } from './device-delivery'
+import { deviceSupersession } from './device-supersession'
 
 type DeliveryStrategy =
   | {
@@ -69,6 +70,7 @@ export function customerio(
       `dest-Customer.io-Data-Pipelines`
     )
 
+  const supersession = deviceSupersession()
   const inflightEvents = new Set<Context>()
   const flushing = false
 
@@ -87,6 +89,21 @@ export function customerio(
   const deviceClient = standard({ keepalive: true })
 
   async function send(ctx: Context): Promise<Context> {
+    supersession.supersede(ctx, (predicate) => {
+      const analyticsRemoved = analytics.queue.queue.remove(predicate)
+      // Resolve dispatch waiters for events cancelled before core delivery.
+      analyticsRemoved.forEach((item) =>
+        analytics.queue.emit('flush', item, false)
+      )
+      const removed = [
+        ...buffer.remove(predicate),
+        ...analyticsRemoved,
+        ...Array.from(inflightEvents).filter(predicate),
+      ]
+      removed.forEach((item) => inflightEvents.delete(item))
+      return removed
+    })
+    if (supersession.stale(ctx)) return ctx
     if (isOffline()) {
       buffer.push(ctx)
       // eslint-disable-next-line @typescript-eslint/no-use-before-define
@@ -122,6 +139,7 @@ export function customerio(
         return ctx
       })
       .catch(() => {
+        if (supersession.stale(ctx)) return ctx
         buffer.pushWithBackoff(ctx)
         // eslint-disable-next-line @typescript-eslint/no-use-before-define
         scheduleFlush(flushing, buffer, customerio, scheduleFlush)

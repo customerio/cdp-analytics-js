@@ -8,6 +8,26 @@ describe('Persisted Priority Queue', () => {
 
   const key = 'event-queue'
 
+  it('removes both live and persisted copies before a reload', () => {
+    const cancelled = new Context(
+      { type: 'track', event: 'cancelled' },
+      'cancelled'
+    )
+    const kept = new Context({ type: 'track', event: 'kept' }, 'kept')
+    const queue = new PersistedPriorityQueue(3, key)
+    queue.push(cancelled, kept)
+    // A previous pagehide may have already persisted these entries.
+    localStorage.setItem(
+      `persisted-queue:v1:${key}:items`,
+      JSON.stringify([cancelled, kept])
+    )
+    expect(queue.remove((item) => item.id === cancelled.id)).toHaveLength(2)
+    expect(queue.includes(cancelled)).toBe(false)
+    const reload = new PersistedPriorityQueue(3, key)
+    expect(reload.todo).toBe(1)
+    expect(reload.pop()!.id).toBe(kept.id)
+  })
+
   it('a queue remembers', () => {
     const ctx = new Context(
       {
