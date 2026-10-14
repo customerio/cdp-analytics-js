@@ -93,6 +93,7 @@
 
   async function flushMetrics(scheduleSync = true) {
     const attempted = new Set()
+    let failed = false
     // Each pass visits at most the queue limit; failed records become ineligible
     // until a later wakeup, with exponential backoff capped at one hour.
     for (let i = 0; i < maxPendingMetrics; i++) {
@@ -139,6 +140,7 @@
           if (current) store.put({ ...current, done: true })
         })
       } catch (error) {
+        failed = true
         // Back off from completion, not request start: a slow failed request
         // must not already be due when the next queued flush starts.
         await updateMetrics((store, records, now) => {
@@ -157,7 +159,7 @@
       records.some((record) => !record.done)
     )
     if (pending && scheduleSync) await scheduleMetricSync()
-    return pending && attempted.size > 0
+    return pending && failed
   }
 
   function sendMetric(url, body) {
