@@ -359,14 +359,19 @@ test('a failed destination rotation retains its owner and selection for reload/r
     )
   ).toMatchObject({
     ...JSON.parse(previous),
-    pendingDelete: { webpush_event_ms: expect.any(Number), webpush_seq: 1 },
+    pendingDelete: {
+      webpush_event_ms: expect.any(Number),
+      webpush_seq: expect.any(Number),
+    },
   })
   track.mockRestore()
   await first.analytics.deregister(name)
 
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30001)
   const reloaded = await load()
   reloaded.analytics.reset()
   await until(() => reloaded.events.length === 1)
+  clock.mockRestore()
   expect(eventShape(reloaded.events)).toEqual([
     {
       event: 'Device Deleted',
@@ -400,11 +405,15 @@ test('a new destination subscription remains reachable when device deletion fail
   ).toMatchObject({
     endpoint: b.old.value.endpoint,
     userId: 'A',
-    pendingDelete: { webpush_seq: 2, webpush_event_ms: expect.any(Number) },
+    pendingDelete: {
+      webpush_seq: expect.any(Number),
+      webpush_event_ms: expect.any(Number),
+    },
   })
   track.mockRestore()
   await first.analytics.deregister(name)
 
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30001)
   const reloaded = await load()
   await until(() => reloaded.events.length === 2)
   expect(eventShape(reloaded.events)).toEqual([
@@ -419,6 +428,7 @@ test('a new destination subscription remains reachable when device deletion fail
       device: { token: b.destination.value.endpoint, type: 'web' },
     },
   ])
+  clock.mockRestore()
 })
 
 test('a stored destination owner survives failed browser subscription without deletion', async () => {

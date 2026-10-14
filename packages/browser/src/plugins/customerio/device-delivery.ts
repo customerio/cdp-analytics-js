@@ -4,7 +4,18 @@ import type { Context } from '../../core/context'
 // HTTP acknowledgement off the event payload and out of persisted contexts.
 // Symbol.for also bridges separately loaded analytics/plugin UMD bundles.
 const accepted = Symbol.for('customerio.webpush.deviceAccepted')
-type DeviceContext = Context & { [accepted]?: boolean }
+const final = Symbol.for('customerio.webpush.deviceFinal')
+export const deviceDeliveryEvent = 'webpush:device-delivery'
+type DeviceContext = Context & {
+  [accepted]?: boolean
+  [final]?: boolean
+}
+
+export const deviceFinal = (ctx: Context): boolean =>
+  (ctx as DeviceContext)[final] === true
+export const finalizeDevice = (ctx: Context): void => {
+  Object.defineProperty(ctx, final, { value: true, configurable: true })
+}
 
 export const deviceAccepted = (ctx: Context): boolean =>
   (ctx as DeviceContext)[accepted] === true

@@ -167,6 +167,8 @@ test.each([
     )
     time += relogin
     await s.analytics.identify('alice')
+    expect(deviceAccepted(dropped!)).toBe(false)
+    await s.destination.track!(dropped!)
     await waitFor(
       () =>
         requests.filter((event) => event.event === 'Device Created or Updated')
@@ -182,12 +184,17 @@ test.each([
       requests
         .filter((event) => event.event?.startsWith('Device'))
         .map((event) => event.context.device.webpush_seq)
-    ).toEqual([1, 2, 2, 3])
+    ).toEqual([
+      1700000000200,
+      1700000000900,
+      1700000000900,
+      Math.max(1700000000901, time),
+    ])
     const deletes = requests.filter((event) => event.event === 'Device Deleted')
     expect(deletes[0].context.device).toEqual(deletes[1].context.device)
     expect(deletes[0].context.device.webpush_event_ms).toBe(1700000000900)
     expect(dropped).toBeDefined()
-    expect(deviceAccepted(dropped!)).toBe(false)
+    expect(deviceAccepted(dropped!)).toBe(true)
     const deletedAt = requests.find(
       (event) => event.event === 'Device Deleted'
     ).timestamp
@@ -233,7 +240,7 @@ test('same-second logout detaches Alice before Bob registers with a higher seque
   await waitFor(() => events.length === 3)
   expect(states).toEqual(['alice', undefined, 'bob'])
   expect(events.map((event) => event.context.device.webpush_seq)).toEqual([
-    1, 2, 3,
+    1700000000200, 1700000000201, 1700000000202,
   ])
   expect(events.map((event) => event.context.device.webpush_event_ms)).toEqual([
     1700000000200, 1700000000200, 1700000000200,
@@ -275,7 +282,7 @@ test.each([false, true])(
     expect(retried.timestamp).toBe(failed.timestamp)
     expect(retried.context.device).toMatchObject({
       webpush_event_ms: 1700000000200,
-      webpush_seq: 2,
+      webpush_seq: 1700000000201,
     })
     await waitFor(
       () =>
@@ -294,7 +301,9 @@ test.each([false, true])(
         )
         .pop()![1]!.body as string
     )
-    expect(created.context.device.webpush_seq).toBeGreaterThan(2)
+    expect(created.context.device.webpush_seq).toBeGreaterThan(
+      failed.context.device.webpush_seq
+    )
     await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
     clock.mockRestore()
   }
@@ -430,6 +439,318 @@ test.each([false, true])(
       jest.mocked(fetch).mock.calls.map(([, options]) => options!.keepalive)
     ).toEqual([true, true])
     await s.plugin.unload?.(Context.system(), s.analytics)
+  }
+)
+
+test('sequence survives clearing all storage after logout and reloading as the same user', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(1700000000000)
+  jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+  const s = await setup()
+  await s.analytics.webPush!.subscribe()
+  s.analytics.reset()
+  await waitFor(() => jest.mocked(fetch).mock.calls.length === 2)
+  const deleted = JSON.parse(
+    jest.mocked(fetch).mock.calls[1][1]!.body as string
+  )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+  localStorage.clear()
+  clock.mockReturnValue(1700000001000)
+  const reloaded = await setup()
+  await reloaded.analytics.webPush!.subscribe()
+  const created = JSON.parse(
+    jest.mocked(fetch).mock.calls[2][1]!.body as string
+  )
+  expect(created.userId).toBe('alice')
+  expect(created.context.device.webpush_seq).toBeGreaterThan(
+    deleted.context.device.webpush_seq
+  )
+  expect(Number.isSafeInteger(created.context.device.webpush_seq)).toBe(true)
+  await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+  clock.mockRestore()
+})
+
+test.each([400, 401, 403, 413])(
+  'terminal delete HTTP %s clears persisted cleanup and permits registration',
+  async (status) => {
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(1700000000000)
+    localStorage.setItem(
+      'cio-webpush:/cio-webpush-sw.js',
+      JSON.stringify({
+        endpoint,
+        userId: 'alice',
+        pendingDelete: { webpush_seq: 5, webpush_event_ms: Date.now() },
+      })
+    )
+    jest.mocked(fetch).mockImplementation(async (_url, options) => {
+      const event = JSON.parse(options!.body as string)
+      return {
+        ok: event.event !== 'Device Deleted',
+        status: event.event === 'Device Deleted' ? status : 200,
+      } as Response
+    })
+    const s = await setup(false, true, 'bob', true)
+    await waitFor(
+      () =>
+        JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+          .userId === 'bob'
+    )
+    expect(
+      JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+        .pendingDelete
+    ).toBeUndefined()
+    expect(
+      jest.mocked(scheduleFlush).mock.calls.flatMap(([, buffer]) => buffer.todo)
+    ).not.toContain(1)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+    const reloaded = await setup(false, true, 'bob', true)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const deletes = jest
+      .mocked(fetch)
+      .mock.calls.filter(
+        ([, options]) =>
+          JSON.parse(options!.body as string).event === 'Device Deleted'
+      )
+    expect(deletes).toHaveLength(1)
+    await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+    clock.mockRestore()
+  }
+)
+
+test('offline Bob registers when the buffered logout delete succeeds without reload or another identify', async () => {
+  jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+  const s = await setup(false, true)
+  await s.analytics.webPush!.subscribe()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  jest.mocked(fetch).mockRejectedValue(new Error('offline'))
+  s.analytics.reset()
+  await waitFor(() => jest.mocked(scheduleFlush).mock.calls.length > 0)
+  await s.analytics.identify('bob')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(
+    JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!).userId
+  ).toBe('alice')
+  const buffer = jest.mocked(scheduleFlush).mock.calls[0][1]
+  // Flush the actual Context in the destination buffer, as scheduleFlush does.
+  const deletion = buffer.pop()!
+  expect(deletion.event.event).toBe('Device Deleted')
+  jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+  await s.destination.track!(deletion)
+  await waitFor(
+    () =>
+      JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+        .userId === 'bob'
+  )
+  const events = jest
+    .mocked(fetch)
+    .mock.calls.map(([, options]) => JSON.parse(options!.body as string))
+  expect(
+    events.filter((event) => event.event === 'Device Created or Updated').pop()
+      .userId
+  ).toBe('bob')
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('an offline short-circuited logout retries on its timer and registers Bob without reload', async () => {
+  jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+  const s = await setup()
+  await s.analytics.webPush!.subscribe()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  const timers = jest.spyOn(window, 'setTimeout')
+  Object.defineProperty(navigator, 'onLine', {
+    configurable: true,
+    value: false,
+  })
+  s.analytics.reset()
+  await waitFor(
+    () =>
+      JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+        .pendingDelete?.attempts === 1
+  )
+  await s.analytics.identify('bob')
+  expect(jest.mocked(fetch)).toHaveBeenCalledTimes(1)
+  const pending = JSON.parse(
+    localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!
+  ).pendingDelete
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(pending.nextAttempt)
+  Reflect.deleteProperty(navigator, 'onLine')
+  // Invoke the scheduled retry at its due time, without waiting 30 real seconds.
+  const retry = timers.mock.calls
+    .filter(([, delay]) => delay === 30000)
+    .pop()![0]
+  expect(typeof retry).toBe('function')
+  ;(retry as () => void)()
+  await waitFor(() => {
+    const record = JSON.parse(
+      localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!
+    )
+    return record.userId === 'bob' && record.registered !== false
+  })
+  expect(
+    jest
+      .mocked(fetch)
+      .mock.calls.map(
+        ([, options]) => JSON.parse(options!.body as string).event
+      )
+  ).toEqual([
+    'Device Created or Updated',
+    'Device Deleted',
+    'Device Created or Updated',
+  ])
+  await s.plugin.unload?.(Context.system(), s.analytics)
+  timers.mockRestore()
+  clock.mockRestore()
+})
+
+test('two plugin instances serialize sequence allocation using the shared Web Lock', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(1700000000000)
+  let tail = Promise.resolve() as Promise<unknown>
+  const request = jest.fn((_name, callback) => {
+    const result = tail.then(() => callback())
+    tail = result.catch(() => {})
+    return result
+  })
+  Object.defineProperty(navigator, 'locks', {
+    configurable: true,
+    value: { request },
+  })
+  jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+  const a = await setup()
+  const b = await setup()
+  await Promise.all([
+    a.analytics.webPush!.subscribe(),
+    b.analytics.webPush!.subscribe(),
+  ])
+  const seqs = jest
+    .mocked(fetch)
+    .mock.calls.map(
+      ([, options]) =>
+        JSON.parse(options!.body as string).context.device.webpush_seq
+    )
+  expect(seqs.sort()).toEqual([1700000000000, 1700000000001])
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(
+    request.mock.calls.every(([name]) => name === `cio-webpush:${endpoint}`)
+  ).toBe(true)
+  await a.plugin.unload?.(Context.system(), a.analytics)
+  await b.plugin.unload?.(Context.system(), b.analytics)
+  Reflect.deleteProperty(navigator, 'locks')
+  clock.mockRestore()
+})
+
+test.each([408, 429, 503])(
+  'pending delete HTTP %s is not duplicated by reloads or identify during backoff',
+  async (status) => {
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(1700000000000)
+    jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+    const s = await setup()
+    await s.analytics.webPush!.subscribe()
+    jest.mocked(fetch).mockResolvedValue({ ok: false, status } as Response)
+    s.analytics.reset()
+    await waitFor(
+      () =>
+        !!JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+          .pendingDelete?.attempts
+    )
+    await s.plugin.unload?.(Context.system(), s.analytics)
+    for (let i = 0; i < 3; i++) {
+      const reload = await setup(false, false, null, true)
+      await reload.analytics.identify('bob')
+      await expect(reload.analytics.webPush!.subscribe()).rejects.toThrow(
+        'backoff'
+      )
+      await reload.plugin.unload?.(Context.system(), reload.analytics)
+    }
+    expect(
+      jest
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([, options]) =>
+            JSON.parse(options!.body as string).event === 'Device Deleted'
+        )
+    ).toHaveLength(1)
+    clock.mockReturnValue(1700000030000)
+    jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+    const recovered = await setup(false, false, 'bob', true)
+    await waitFor(
+      () =>
+        JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+          .userId === 'bob'
+    )
+    await recovered.plugin.unload?.(Context.system(), recovered.analytics)
+    clock.mockRestore()
+  }
+)
+
+test('the retry timer enforces the attempt cap and releases Bob after a failed final attempt', async () => {
+  localStorage.setItem(
+    'cio-webpush:/cio-webpush-sw.js',
+    JSON.stringify({
+      endpoint,
+      userId: 'alice',
+      pendingDelete: {
+        webpush_seq: 5,
+        webpush_event_ms: Date.now(),
+        attempts: 19,
+        nextAttempt: Date.now() + 200,
+      },
+    })
+  )
+  jest.mocked(fetch).mockImplementation(async (_url, options) => {
+    const deleted =
+      JSON.parse(options!.body as string).event === 'Device Deleted'
+    return { ok: !deleted, status: deleted ? 503 : 200 } as Response
+  })
+  const s = await setup(false, false, 'bob', true)
+  expect(jest.mocked(fetch)).not.toHaveBeenCalled()
+  await waitFor(() => {
+    const record = JSON.parse(
+      localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!
+    )
+    return record.userId === 'bob' && record.registered !== false
+  })
+  expect(
+    jest
+      .mocked(fetch)
+      .mock.calls.map(
+        ([, options]) => JSON.parse(options!.body as string).event
+      )
+  ).toEqual(['Device Deleted', 'Device Created or Updated'])
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each(['age', 'attempts'])(
+  'pending delete is bounded by %s even if its next attempt is in the future',
+  async (bound) => {
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(1700000000000)
+    localStorage.setItem(
+      'cio-webpush:/cio-webpush-sw.js',
+      JSON.stringify({
+        endpoint,
+        userId: 'alice',
+        pendingDelete: {
+          webpush_seq: 5,
+          webpush_event_ms: Date.now() - (bound === 'age' ? 7 * 86400000 : 0),
+          attempts: bound === 'attempts' ? 20 : 1,
+          nextAttempt: Date.now() + 3600000,
+        },
+      })
+    )
+    jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+    const s = await setup(false, false, 'bob', true)
+    await waitFor(
+      () =>
+        JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+          .userId === 'bob'
+    )
+    expect(
+      jest
+        .mocked(fetch)
+        .mock.calls.map(
+          ([, options]) => JSON.parse(options!.body as string).event
+        )
+    ).toEqual(['Device Created or Updated'])
+    await s.plugin.unload?.(Context.system(), s.analytics)
+    clock.mockRestore()
   }
 )
 

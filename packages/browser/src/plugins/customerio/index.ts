@@ -11,18 +11,23 @@ import batch, { BatchingDispatchConfig } from './batched-dispatcher'
 import standard, { StandardDispatcherConfig } from './fetch-dispatcher'
 import { normalize } from './normalize'
 import { scheduleFlush } from './schedule-flush'
-import { acceptDevice, isDeviceEvent } from './device-delivery'
+import {
+  acceptDevice,
+  deviceDeliveryEvent,
+  finalizeDevice,
+  isDeviceEvent,
+} from './device-delivery'
 import { deviceSupersession } from './device-supersession'
 
 type DeliveryStrategy =
   | {
-    strategy?: 'standard'
-    config?: StandardDispatcherConfig
-  }
+      strategy?: 'standard'
+      config?: StandardDispatcherConfig
+    }
   | {
-    strategy?: 'batching'
-    config?: BatchingDispatchConfig
-  }
+      strategy?: 'batching'
+      config?: BatchingDispatchConfig
+    }
 
 export type CustomerioSettings = {
   apiKey: string
@@ -66,9 +71,9 @@ export function customerio(
   const buffer = analytics.options.disableClientPersistence
     ? new PriorityQueue<Context>(analytics.queue.queue.maxAttempts, [])
     : new PersistedPriorityQueue(
-      analytics.queue.queue.maxAttempts,
-      `dest-Customer.io-Data-Pipelines`
-    )
+        analytics.queue.queue.maxAttempts,
+        `dest-Customer.io-Data-Pipelines`
+      )
 
   const supersession = deviceSupersession()
   const inflightEvents = new Set<Context>()
@@ -104,7 +109,9 @@ export function customerio(
       return removed
     })
     if (supersession.stale(ctx)) return ctx
+    const lifecycle = isDeviceEvent(ctx)
     if (isOffline()) {
+      if (lifecycle) analytics.emit(deviceDeliveryEvent, ctx)
       buffer.push(ctx)
       // eslint-disable-next-line @typescript-eslint/no-use-before-define
       scheduleFlush(flushing, buffer, customerio, scheduleFlush)
@@ -124,7 +131,6 @@ export function customerio(
       json = onAlias(analytics, json)
     }
 
-    const lifecycle = isDeviceEvent(ctx)
     return (lifecycle ? deviceClient : client)
       .dispatch(
         `${remote}/${path}`,
@@ -132,14 +138,24 @@ export function customerio(
       )
       .then((response) => {
         if (lifecycle) {
-          if (!(response as Response).ok)
+          const { ok, status } = response as Response
+          const terminalDelete =
+            ctx.event.event === 'Device Deleted' &&
+            status >= 400 &&
+            status < 500 &&
+            status !== 408 &&
+            status !== 429
+          if (!ok && !terminalDelete)
             throw new Error('Web push device request was not accepted.')
-          acceptDevice(ctx)
+          if (ok) acceptDevice(ctx)
+          else finalizeDevice(ctx)
+          analytics.emit(deviceDeliveryEvent, ctx)
         }
         return ctx
       })
       .catch(() => {
         if (supersession.stale(ctx)) return ctx
+        if (lifecycle) analytics.emit(deviceDeliveryEvent, ctx)
         buffer.pushWithBackoff(ctx)
         // eslint-disable-next-line @typescript-eslint/no-use-before-define
         scheduleFlush(flushing, buffer, customerio, scheduleFlush)

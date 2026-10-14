@@ -134,7 +134,10 @@ test.each(['identify', 'pageshow', 'reload', 'subscribe'])(
       endpoint: value.endpoint,
       userId: 'person',
       registered: false,
-      pendingCreate: { webpush_event_ms: expect.any(Number), webpush_seq: 1 },
+      pendingCreate: {
+        webpush_event_ms: expect.any(Number),
+        webpush_seq: expect.any(Number),
+      },
     })
     s.manager.getSubscription.mockResolvedValue(s.subscription)
     if (trigger === 'reload') {
@@ -188,7 +191,7 @@ test('device events carry original wall-clock time without future-dating same-se
   expect(times).toEqual([1700000000000, 1700000000000, 1700000000000])
   expect(
     calls.map(([, , options]) => (options as any).context.device.webpush_seq)
-  ).toEqual([1, 2, 3])
+  ).toEqual([1700000000000, 1700000000001, 1700000000002])
   await s.plugin.unload?.(Context.system(), s.analytics)
   now.mockReturnValue(1700000002000)
   await s.load()
@@ -197,7 +200,7 @@ test('device events carry original wall-clock time without future-dating same-se
   expect(
     Number(typeof options === 'object' ? options?.timestamp : undefined)
   ).toBe(1700000002000)
-  expect((options as any).context.device.webpush_seq).toBe(4)
+  expect((options as any).context.device.webpush_seq).toBe(1700000002000)
   now.mockRestore()
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
@@ -400,10 +403,14 @@ test('retains a fallback rotation owner after failed deletion so reload and rese
   ).toMatchObject({
     endpoint: value.endpoint,
     userId: 'person',
-    pendingDelete: { webpush_seq: 1, webpush_event_ms: expect.any(Number) },
+    pendingDelete: {
+      webpush_seq: expect.any(Number),
+      webpush_event_ms: expect.any(Number),
+    },
   })
   await s.plugin.unload?.(Context.system(), s.analytics)
 
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30001)
   const reloaded = setup()
   await reloaded.load()
   await new Promise((resolve) => setTimeout(resolve, 0))
@@ -422,7 +429,7 @@ test('retains a fallback rotation owner after failed deletion so reload and rese
         device: {
           token: value.endpoint,
           type: 'web',
-          webpush_seq: 1,
+          webpush_seq: expect.any(Number),
           webpush_event_ms: expect.any(Number),
         },
       },
@@ -432,6 +439,7 @@ test('retains a fallback rotation owner after failed deletion so reload and rese
     JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
   ).toEqual({ endpoint: value.endpoint, userId: null })
   await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+  clock.mockRestore()
 })
 
 test('does not replace an unrelated worker at the requested scope', async () => {
@@ -554,7 +562,7 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
         device: {
           token: value.endpoint,
           type: 'web',
-          webpush_seq: 1,
+          webpush_seq: expect.any(Number),
           webpush_event_ms: expect.any(Number),
         },
       },
@@ -618,7 +626,7 @@ test('finishes the first subscription after permission changes from default to g
         device: {
           token: value.endpoint,
           type: 'web',
-          webpush_seq: 1,
+          webpush_seq: expect.any(Number),
           webpush_event_ms: expect.any(Number),
         },
       },
@@ -674,7 +682,7 @@ test('returns the live subscription and unsubscribes before tracking deletion', 
         device: {
           token: value.endpoint,
           type: 'web',
-          webpush_seq: 1,
+          webpush_seq: expect.any(Number),
           webpush_event_ms: expect.any(Number),
         },
       },
@@ -701,10 +709,15 @@ test('keeps the deleted endpoint for retry when tracking fails', async () => {
   ).toMatchObject({
     endpoint: value.endpoint,
     userId: 'person',
-    pendingDelete: { webpush_seq: 1, webpush_event_ms: expect.any(Number) },
+    pendingDelete: {
+      webpush_seq: expect.any(Number),
+      webpush_event_ms: expect.any(Number),
+    },
   })
   s.manager.getSubscription.mockResolvedValue(null)
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30001)
   await s.analytics.webPush!.unsubscribe()
+  clock.mockRestore()
   expect(s.analytics.track).toHaveBeenLastCalledWith(
     'Device Deleted',
     {},
@@ -716,7 +729,7 @@ test('keeps the deleted endpoint for retry when tracking fails', async () => {
         device: {
           token: value.endpoint,
           type: 'web',
-          webpush_seq: 1,
+          webpush_seq: expect.any(Number),
           webpush_event_ms: expect.any(Number),
         },
       },
@@ -749,10 +762,14 @@ test('keeps a previous owner at the new worker path when deletion fails', async 
   ).toMatchObject({
     endpoint: 'https://push.example/previous',
     userId: 'person',
-    pendingDelete: { webpush_seq: 1, webpush_event_ms: expect.any(Number) },
+    pendingDelete: {
+      webpush_seq: expect.any(Number),
+      webpush_event_ms: expect.any(Number),
+    },
   })
   await s.plugin.unload?.(Context.system(), s.analytics)
 
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30001)
   const reloaded = setup()
   await reloaded.load()
   await reloaded.analytics.webPush!.subscribe()
@@ -760,6 +777,7 @@ test('keeps a previous owner at the new worker path when deletion fails', async 
     (reloaded.analytics.track as jest.Mock).mock.calls.map(([event]) => event)
   ).toEqual(['Device Deleted', 'Device Created or Updated'])
   await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+  clock.mockRestore()
 })
 
 test('a worker path change never overwrites an existing destination owner', async () => {

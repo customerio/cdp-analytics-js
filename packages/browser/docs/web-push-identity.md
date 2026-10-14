@@ -5,8 +5,12 @@
 Every web `Device Deleted` and `Device Created or Updated` includes
 `context.device.webpush_event_ms` (the original browser epoch milliseconds) and
 `context.device.webpush_seq` (an increasing per-endpoint integer). The sequence
-is persisted in localStorage independently of the current owner, so clearing an
-owner or switching worker paths does not restart it. Events use the current
+is `max(previous + 1, Date.now())`, persisted in localStorage independently of
+the current owner. Clearing an owner or switching worker paths does not restart
+it; after storage loss the wall-clock floor assumes time has advanced beyond
+the prior sequence. Values use epoch-ms scale and require 64-bit integers at
+all downstream hops. Web Locks serialize sequence read/increment/write across
+tabs when available; the fallback remains best effort. Events use the current
 browser time, never an artificial future offset. Their top-level `timestamp`
 uses that same original time; Created events do not supply `last_used`.
 
@@ -18,8 +22,9 @@ same-second logout from an old Delete retried after a newer registration.
 SDK metadata alone cannot fix a server still using whole-second ordering.
 
 **Registration does not itself transfer an endpoint between people.** The SDK
-sends the previous owner's Delete and requires its HTTP acknowledgement before
-registering the next owner. This acknowledgement is not proof of downstream
+sends the previous owner's Delete before registering the next owner. It waits
+for acknowledgement unless cleanup is terminal or reaches its retry bounds
+(described below). This acknowledgement is not proof of downstream
 Journeys processing; reliable downstream ordering requires the coordinated
 Pipelines, edge and services deployment.
 
@@ -34,9 +39,10 @@ operations re-read current identity before creating their event.
 
 This is client-side retry protection, not a server uniqueness guarantee. A
 request already dispatched cannot be recalled. Reliable cross-reload recovery
-requires available localStorage. Clearing browser storage and independent
-concurrent tabs are not fully ordered by this mechanism. Sequence ordering also
-protects client retry cancellation when the wall clock moves backwards.
+requires available localStorage. Web Locks protect sequence allocation, not
+the entire owner record across tabs. After storage loss a backwards clock can
+still violate ordering. With retained counters, sequence ordering also protects
+client retry cancellation when the wall clock moves backwards.
 
 ## Acceptance and recovery
 
@@ -58,11 +64,21 @@ The owner remains available for reset/unsubscribe cleanup. A pending Create's
 ordering fields are saved with that record and reused on recovery.
 
 Before sending a Delete, the plugin persists `pendingDelete` with its original
-sequence/time and keeps the previous owner until HTTP acknowledgement. A queued
-or failed Delete does not clear the record. On reload it retries cleanup even
-without an identified visitor or a live push subscription; identify, pageshow
-and subscribe can also retry. Successful cleanup clears the pending record and
-permits the next registration. If localStorage is denied, recovery is limited
+sequence/time, failed-attempt count and next-attempt time. Transient failures
+back off from completion (30 seconds, doubling to one hour). Reloads, identify
+and subscribe respect that persisted backoff instead of duplicating Deletes.
+A page timer also retries cleanup if Analytics short-circuited an offline event
+before destination delivery. On reload cleanup runs even without an identified
+visitor or a live push subscription.
+
+Cleanup clears on HTTP success, final 4xx (except 408/429), 20 failed attempts,
+or seven days of age. Delivery feedback includes buffered acknowledgements and
+final rejections, which automatically reconcile the current visitor without
+another identify or reload. Concurrent feedback/identify reconciliation does
+not duplicate registration. These bounds intentionally unblock registration;
+abandoning an unaccepted Delete is not proof the old owner was detached on the
+server. Delayed older Deletes cannot supersede newer registrations under the
+coordinated ordering contract. If localStorage is denied, recovery is limited
 to the current page's memory. This does not change native device events or
 ordinary analytics delivery.
 
