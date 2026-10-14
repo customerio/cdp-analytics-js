@@ -10,7 +10,8 @@ export function createWorker(
   worker: string,
   workerUrl = 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io',
   globals: Record<string, unknown> = {},
-  indexedDB = new IDBFactory()
+  indexedDB = new IDBFactory(),
+  runtime: Record<string, unknown> = {}
 ) {
   const listeners: Record<string, (event: any) => void> = {}
   const fetch = jest.fn().mockResolvedValue({ ok: true })
@@ -47,9 +48,14 @@ export function createWorker(
     Date,
     AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
     console: { warn },
+    ...runtime,
   })
-  vm.runInContext(fs.readFileSync(worker, 'utf8'), context)
-  const startup: Promise<unknown> = vm.runInContext('startupMetrics', context)
+  // Model a host worker with names that would collide without the IIFE.
+  vm.runInContext('let retryMetrics, metricTasks, trackUrl, metric;', context)
+  const startup: Promise<unknown> = vm.runInContext(
+    fs.readFileSync(worker, 'utf8'),
+    context
+  )
   const invoke = (name: string, event: any) => {
     const tasks: Promise<unknown>[] = []
     listeners[name]?.({
