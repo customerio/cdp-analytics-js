@@ -1,6 +1,7 @@
 import type { Analytics } from '../../core/analytics'
 import type { Plugin } from '../../core/plugin'
 import { getCDN } from '../../lib/parse-cdn'
+import { deviceAccepted } from '../customerio/device-delivery'
 
 export interface WebPushSubscriptionJSON {
   endpoint: string
@@ -86,7 +87,11 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     new URL(workerUrl, location.href).pathname
   }`
   let serviceWorker: ServiceWorkerContainer | undefined
-  type Device = { endpoint: string; userId: string | null }
+  type Device = {
+    endpoint: string
+    userId: string | null
+    registered?: false
+  }
   let memory: Device | null = null
   const storageKey = () =>
     `cio-webpush:${new URL(workerUrl, location.href).pathname}`
@@ -121,13 +126,17 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   const pending = new Set<(error?: Error) => void>()
   const identified = () => {
     if (analytics.user().id()) {
+      const waiting = pending.size > 0
       pending.forEach((finish) => finish())
-      const previous = stored()
-      if (previous && previous.userId !== analytics.user().id())
-        background(reconcile())
+      // Pending subscribe calls already register after identity resolves.
+      // Otherwise inspect the browser even without a local registration record.
+      if (!waiting) background(reconcile())
     }
   }
-  const pagehide = () =>
+  const pagehide = (event?: PageTransitionEvent) => {
+    // A bfcache freeze is not the end of this page's lifetime. Retain the live
+    // subscription and identity waiters so subscribe still resolves on return.
+    if (event?.persisted) return
     pending.forEach((finish) =>
       finish(
         new Error(
@@ -135,6 +144,10 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         )
       )
     )
+  }
+  const pageshow = (event: PageTransitionEvent) => {
+    if (event.persisted && analytics.user().id()) identified()
+  }
   const identity = (): Promise<void> => {
     if (analytics.user().id()) return Promise.resolve()
     return new Promise((resolve, reject) => {
@@ -161,6 +174,10 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     (await registration())?.pushManager.getSubscription() ?? null
   const device = (token: string, userId?: string) => ({
     ...(userId ? { userId } : {}),
+    // Journeys compares floored seconds and ignores deletes <= last_used.
+    // Never future-date: registration timestamps are clamped by the server.
+    // This event time is serialized once and retained by destination retries.
+    timestamp: new Date(Date.now()),
     context: { device: { token, type: 'web' } },
   })
   const deleteDevice = async (previous: Device) => {
@@ -206,7 +223,10 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         await deleteDevice(previous)
         save({ endpoint: previous.endpoint, userId: null })
       }
-      await analytics.track(
+      // Retain the owner for deletion, but never treat a queued/failed attempt
+      // as a registration. Reload, identify and pageshow can retry it.
+      save({ endpoint: value.endpoint, userId, registered: false })
+      const result = await analytics.track(
         'Device Created or Updated',
         {
           webpush_p256dh: value.keys.p256dh,
@@ -215,18 +235,26 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         },
         device(value.endpoint, userId)
       )
+      if (!deviceAccepted(result))
+        throw new Error(
+          'Web push device registration was not accepted; retry subscribe.'
+        )
       save({ endpoint: value.endpoint, userId })
       return value
     })
   }
   const reconcile = async (force = false) => {
     const subscription = await live()
+    // reset's deletion may still be settling when identify fires. Inspect the
+    // record only after earlier mutations have cleared the previous owner.
+    await mutations
     const previous = stored()
     if (
       subscription &&
       (force ||
         previous?.endpoint !== subscription.endpoint ||
-        previous?.userId !== analytics.user().id())
+        previous?.userId !== analytics.user().id() ||
+        previous?.registered === false)
     )
       await registerDevice(subscription)
   }
@@ -422,6 +450,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       analytics.on('identify', identified)
       analytics.on('reset', reset)
       window.addEventListener('pagehide', pagehide)
+      window.addEventListener('pageshow', pageshow)
       if (serviceWorker) {
         serviceWorker.addEventListener('message', message)
         // Only inspect an existing subscription; loading never registers or prompts.
@@ -435,6 +464,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       analytics?.off('identify', identified)
       analytics?.off('reset', reset)
       window.removeEventListener('pagehide', pagehide)
+      window.removeEventListener('pageshow', pageshow)
       serviceWorker?.removeEventListener('message', message)
       if (analytics?.webPush === api) delete analytics.webPush
       return Promise.resolve()

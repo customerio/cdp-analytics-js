@@ -11,16 +11,17 @@ import batch, { BatchingDispatchConfig } from './batched-dispatcher'
 import standard, { StandardDispatcherConfig } from './fetch-dispatcher'
 import { normalize } from './normalize'
 import { scheduleFlush } from './schedule-flush'
+import { acceptDevice, isDeviceEvent } from './device-delivery'
 
 type DeliveryStrategy =
   | {
-    strategy?: 'standard'
-    config?: StandardDispatcherConfig
-  }
+      strategy?: 'standard'
+      config?: StandardDispatcherConfig
+    }
   | {
-    strategy?: 'batching'
-    config?: BatchingDispatchConfig
-  }
+      strategy?: 'batching'
+      config?: BatchingDispatchConfig
+    }
 
 export type CustomerioSettings = {
   apiKey: string
@@ -64,9 +65,9 @@ export function customerio(
   const buffer = analytics.options.disableClientPersistence
     ? new PriorityQueue<Context>(analytics.queue.queue.maxAttempts, [])
     : new PersistedPriorityQueue(
-      analytics.queue.queue.maxAttempts,
-      `dest-Customer.io-Data-Pipelines`
-    )
+        analytics.queue.queue.maxAttempts,
+        `dest-Customer.io-Data-Pipelines`
+      )
 
   const inflightEvents = new Set<Context>()
   const flushing = false
@@ -80,6 +81,11 @@ export function customerio(
     deliveryStrategy?.strategy === 'batching'
       ? batch(remote, deliveryStrategy.config)
       : standard(deliveryStrategy?.config as StandardDispatcherConfig)
+
+  // Device lifecycle calls require a real HTTP acknowledgement, even when
+  // ordinary analytics events use fire-and-forget batching.
+  const deviceClient =
+    deliveryStrategy?.strategy === 'batching' ? standard() : client
 
   async function send(ctx: Context): Promise<Context> {
     if (isOffline()) {
@@ -102,12 +108,20 @@ export function customerio(
       json = onAlias(analytics, json)
     }
 
-    return client
+    const lifecycle = isDeviceEvent(ctx)
+    return (lifecycle ? deviceClient : client)
       .dispatch(
         `${remote}/${path}`,
         normalize(analytics, json, settings, integrations)
       )
-      .then(() => ctx)
+      .then((response) => {
+        if (lifecycle) {
+          if (!(response as Response).ok)
+            throw new Error('Web push device request was not accepted.')
+          acceptDevice(ctx)
+        }
+        return ctx
+      })
       .catch(() => {
         buffer.pushWithBackoff(ctx)
         // eslint-disable-next-line @typescript-eslint/no-use-before-define

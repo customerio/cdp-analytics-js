@@ -1,6 +1,7 @@
 import { Analytics } from '../../../core/analytics'
 import { Context } from '../../../core/context'
 import { WebPushPlugin } from '..'
+import { acceptDevice } from '../../customerio/device-delivery'
 
 const key = btoa(String.fromCharCode(4) + 'a'.repeat(64))
 const value = {
@@ -52,7 +53,11 @@ function setup(userId: string | null = 'person') {
   })
   const analytics = {
     user: () => ({ id: () => id }),
-    track: jest.fn().mockResolvedValue({}),
+    track: jest.fn().mockImplementation(async () => {
+      const ctx = Context.system()
+      acceptDevice(ctx)
+      return ctx
+    }),
     on: jest.fn((event, listener) => {
       listeners[event] = listener
     }),
@@ -82,6 +87,113 @@ function setup(userId: string | null = 'person') {
 }
 
 beforeEach(() => localStorage.clear())
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+const record = () =>
+  JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+
+test('retains anonymous subscribe through a bfcache freeze and identifies on return', async () => {
+  const s = setup(null)
+  await s.load()
+  const result = s.analytics.webPush!.subscribe()
+  await settle()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+  window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+  await settle()
+  expect(s.analytics.track).not.toHaveBeenCalled()
+  s.identify()
+  await expect(result).resolves.toEqual(value)
+  expect(s.analytics.track).toHaveBeenCalledTimes(1)
+  expect(record().userId).toBe('person')
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('identify reattaches a live subscription without any saved registration', async () => {
+  const s = setup(null)
+  await s.load()
+  await settle()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  s.identify()
+  await settle()
+  expect(s.analytics.track).toHaveBeenCalledTimes(1)
+  expect(record().userId).toBe('person')
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each(['identify', 'pageshow', 'reload', 'subscribe'])(
+  'unaccepted registration remains retryable on %s',
+  async (trigger) => {
+    const s = setup()
+    await s.load()
+    jest.mocked(s.analytics.track).mockResolvedValueOnce(Context.system())
+    await expect(s.analytics.webPush!.subscribe()).rejects.toThrow(
+      'not accepted'
+    )
+    expect(record()).toEqual({
+      endpoint: value.endpoint,
+      userId: 'person',
+      registered: false,
+    })
+    s.manager.getSubscription.mockResolvedValue(s.subscription)
+    if (trigger === 'reload') {
+      await s.plugin.unload?.(Context.system(), s.analytics)
+      await s.load()
+    } else if (trigger === 'identify') s.identify()
+    else if (trigger === 'pageshow')
+      window.dispatchEvent(
+        new PageTransitionEvent('pageshow', { persisted: true })
+      )
+    else await s.analytics.webPush!.subscribe()
+    await settle()
+    expect(record()).toEqual({ endpoint: value.endpoint, userId: 'person' })
+    expect(s.analytics.track).toHaveBeenCalledTimes(2)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  }
+)
+
+test('a rejected forced registration invalidates a previously matching record', async () => {
+  const s = setup()
+  await s.load()
+  await s.analytics.webPush!.subscribe()
+  jest.mocked(s.analytics.track).mockRejectedValueOnce(new Error('network'))
+  await expect(s.analytics.webPush!.subscribe()).rejects.toThrow('network')
+  expect(record().registered).toBe(false)
+  await s.analytics.webPush!.subscribe()
+  expect(record().registered).toBeUndefined()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('device events carry original wall-clock time without future-dating same-second operations', async () => {
+  const now = jest.spyOn(Date, 'now').mockReturnValue(1700000000000)
+  const s = setup()
+  await s.load()
+  await s.analytics.webPush!.subscribe()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  s.reset()
+  s.identify()
+  await settle()
+  const calls = jest.mocked(s.analytics.track).mock.calls
+  expect(calls.map(([event]) => event)).toEqual([
+    'Device Created or Updated',
+    'Device Deleted',
+    'Device Created or Updated',
+  ])
+  const times = calls.map(([, , options]) =>
+    Number(typeof options === 'object' ? options?.timestamp : undefined)
+  )
+  expect(times).toEqual([1700000000000, 1700000000000, 1700000000000])
+  await s.plugin.unload?.(Context.system(), s.analytics)
+  now.mockReturnValue(1700000002000)
+  await s.load()
+  await s.analytics.webPush!.subscribe()
+  const options = jest.mocked(s.analytics.track).mock.calls[3][2]
+  expect(
+    Number(typeof options === 'object' ? options?.timestamp : undefined)
+  ).toBe(1700000002000)
+  now.mockRestore()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
 
 test('reuses a compatible subscription when the browser does not expose its key', async () => {
   const s = setup()
@@ -292,6 +404,7 @@ test('retains a fallback rotation owner after failed deletion so reload and rese
     'Device Deleted',
     {},
     {
+      timestamp: expect.any(Date),
       userId: 'person',
       anonymousId: null,
       context: { device: { token: value.endpoint, type: 'web' } },
@@ -417,6 +530,7 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
       user_agent: navigator.userAgent,
     },
     {
+      timestamp: expect.any(Date),
       userId: 'person',
       context: { device: { token: value.endpoint, type: 'web' } },
     }
@@ -473,6 +587,7 @@ test('finishes the first subscription after permission changes from default to g
     'Device Created or Updated',
     expect.objectContaining({ webpush_p256dh: 'p256dh', webpush_auth: 'auth' }),
     {
+      timestamp: expect.any(Date),
       userId: 'person',
       context: { device: { token: value.endpoint, type: 'web' } },
     }
@@ -520,6 +635,7 @@ test('returns the live subscription and unsubscribes before tracking deletion', 
     'Device Deleted',
     {},
     {
+      timestamp: expect.any(Date),
       userId: 'person',
       anonymousId: null,
       context: { device: { token: value.endpoint, type: 'web' } },
@@ -550,6 +666,7 @@ test('keeps the deleted endpoint for retry when tracking fails', async () => {
     'Device Deleted',
     {},
     {
+      timestamp: expect.any(Date),
       userId: 'person',
       anonymousId: null,
       context: { device: { token: value.endpoint, type: 'web' } },
