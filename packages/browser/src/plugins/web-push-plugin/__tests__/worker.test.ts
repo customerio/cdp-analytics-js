@@ -1,76 +1,8 @@
-import fs from 'fs'
-import path from 'path'
-import vm from 'vm'
+/** @jest-environment node */
+import { createWorker, worker } from './worker-harness'
 
 beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(1700000000000))
 afterEach(() => jest.restoreAllMocks())
-
-// The build ships this file unchanged as dist/cio-webpush-sw.js and fails if
-// the emitted copy differs (webpack.config.js), so the source is what's tested.
-const worker = path.join(__dirname, '../cio-webpush-sw.js')
-
-function createWorker(
-  worker: string,
-  workerUrl = 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io',
-  globals: Record<string, unknown> = {}
-) {
-  const listeners: Record<string, (event: any) => void> = {}
-  const fetch = jest.fn().mockResolvedValue({ ok: true })
-  const showNotification = jest.fn().mockResolvedValue(undefined)
-  const openWindow = jest.fn().mockResolvedValue(undefined)
-  const postMessage = jest.fn()
-  const pushManager = {
-    getSubscription: jest.fn().mockResolvedValue({ endpoint: 'endpoint' }),
-    subscribe: jest.fn().mockResolvedValue({}),
-  }
-  const skipWaiting = jest.fn().mockResolvedValue(undefined)
-  const claim = jest.fn().mockResolvedValue(undefined)
-  const self = {
-    ...globals,
-    skipWaiting,
-    location: {
-      href: workerUrl,
-      origin: new URL(workerUrl).origin,
-    },
-    addEventListener: (name: string, fn: (event: any) => void) => {
-      listeners[name] = fn
-    },
-    registration: { showNotification, pushManager },
-    clients: {
-      claim,
-      openWindow,
-      matchAll: jest.fn().mockResolvedValue([{ postMessage }]),
-    },
-  }
-  vm.runInNewContext(fs.readFileSync(worker, 'utf8'), {
-    self,
-    fetch,
-    URL,
-    Date,
-    AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
-    console: { warn: jest.fn() },
-  })
-  const invoke = (name: string, event: any) => {
-    let task: Promise<unknown> = Promise.resolve()
-    listeners[name]?.({
-      ...event,
-      waitUntil: (promise: Promise<unknown>) => {
-        task = promise
-      },
-    })
-    return task
-  }
-  return {
-    invoke,
-    skipWaiting,
-    claim,
-    fetch,
-    showNotification,
-    openWindow,
-    postMessage,
-    pushManager,
-  }
-}
 
 describe('cio-webpush-sw.js', () => {
   const setup = () => createWorker(worker)

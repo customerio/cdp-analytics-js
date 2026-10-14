@@ -125,6 +125,21 @@ with an existing worker, preserve this query in every host registration call;
 registering the bare URL later drops the endpoint and disables delivered/opened
 metrics. Rebuild/copy the push handlers when updating the SDK.
 
+Delivered/opened reports are saved in an IndexedDB outbox before sending. Failed
+HTTP responses and offline requests retry on worker startup, push, notification
+click, and Background Sync (where supported), with 30-second exponential backoff
+capped at one hour. Notification display and navigation do not wait for reporting.
+The outbox retains at most 100 pending reports and 1,000 total records for seven
+days; overflow evicts the oldest pending report or acknowledged receipt. Repeated
+reports for the same delivery, event, and device (regardless of button) are
+suppressed while their record is retained. Retries preserve the first timestamp
+and action. Storage denial prevents durable reporting but not notifications.
+Browser termination or a lost HTTP acknowledgement can still replay an accepted
+request; end-to-end exactly-once reporting requires server-side idempotency too.
+
+A failed optional Web Push chunk import or plugin construction is warned once
+per analytics load and skipped; ordinary analytics continues to initialize.
+
 Safari supports web push on supported macOS versions; iOS/iPadOS 16.4+ requires an
 installed Home Screen web app (with a web app manifest). Request permission from
 a user action. Unsupported browsers or denied permission reject `subscribe`.

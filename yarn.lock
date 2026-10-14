@@ -784,6 +784,7 @@ __metadata:
     customerio-gist-web: 3.26.0
     dset: ^3.1.4
     execa: ^4.1.0
+    fake-indexeddb: ^5.0.2
     flat: ^5.0.2
     fs-extra: ^9.0.1
     jest-dev-server: ^6.0.3
@@ -6470,6 +6471,13 @@ __metadata:
   bin:
     extract-zip: cli.js
   checksum: 8cbda9debdd6d6980819cc69734d874ddd71051c9fe5bde1ef307ebcedfe949ba57b004894b585f758b7c9eeeea0e3d87f2dda89b7d25320459c2c9643ebb635
+  languageName: node
+  linkType: hard
+
+"fake-indexeddb@npm:^5.0.2":
+  version: 5.0.2
+  resolution: "fake-indexeddb@npm:5.0.2"
+  checksum: df4dc15c2f2b1a04429461fdc4da02bf25e9b84e2bbfa2ffcf4bb87764f75eef772bb36b245547538796f372c5190eb06cdaa391c7c5f5662b19667f949106cb
   languageName: node
   linkType: hard
 

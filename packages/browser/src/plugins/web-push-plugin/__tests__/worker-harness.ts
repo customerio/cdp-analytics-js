@@ -1,0 +1,93 @@
+import fs from 'fs'
+import path from 'path'
+import vm from 'vm'
+import { IDBFactory } from 'fake-indexeddb'
+
+// The build ships this file unchanged; test the exact service worker source.
+export const worker = path.join(__dirname, '../cio-webpush-sw.js')
+
+export function createWorker(
+  worker: string,
+  workerUrl = 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io',
+  globals: Record<string, unknown> = {},
+  indexedDB = new IDBFactory()
+) {
+  const listeners: Record<string, (event: any) => void> = {}
+  const fetch = jest.fn().mockResolvedValue({ ok: true })
+  const showNotification = jest.fn().mockResolvedValue(undefined)
+  const openWindow = jest.fn().mockResolvedValue(undefined)
+  const postMessage = jest.fn()
+  const pushManager = {
+    getSubscription: jest.fn().mockResolvedValue({ endpoint: 'endpoint' }),
+    subscribe: jest.fn().mockResolvedValue({}),
+  }
+  const skipWaiting = jest.fn().mockResolvedValue(undefined)
+  const claim = jest.fn().mockResolvedValue(undefined)
+  const sync = { register: jest.fn().mockResolvedValue(undefined) }
+  const self = {
+    ...globals,
+    skipWaiting,
+    location: { href: workerUrl, origin: new URL(workerUrl).origin },
+    addEventListener: (name: string, fn: (event: any) => void) => {
+      listeners[name] = fn
+    },
+    registration: { showNotification, pushManager, sync },
+    clients: {
+      claim,
+      openWindow,
+      matchAll: jest.fn().mockResolvedValue([{ postMessage }]),
+    },
+  }
+  const warn = jest.fn()
+  const context = vm.createContext({
+    self,
+    fetch,
+    indexedDB,
+    URL,
+    Date,
+    AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
+    console: { warn },
+  })
+  vm.runInContext(fs.readFileSync(worker, 'utf8'), context)
+  const startup: Promise<unknown> = vm.runInContext('startupMetrics', context)
+  const invoke = (name: string, event: any) => {
+    const tasks: Promise<unknown>[] = []
+    listeners[name]?.({
+      ...event,
+      waitUntil: (promise: Promise<unknown>) => {
+        tasks.push(promise)
+      },
+    })
+    return Promise.all(tasks)
+  }
+  return {
+    invoke,
+    skipWaiting,
+    claim,
+    fetch,
+    showNotification,
+    openWindow,
+    postMessage,
+    pushManager,
+    indexedDB,
+    sync,
+    startup,
+    warn,
+  }
+}
+
+export async function readMetrics(indexedDB: IDBFactory): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('cio-webpush-metrics', 1)
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const db = open.result
+      const request = db.transaction('events').objectStore('events').getAll()
+      request.onsuccess = () => {
+        resolve(request.result)
+        db.close()
+      }
+      request.onerror = () => reject(request.error)
+    }
+  })
+}
