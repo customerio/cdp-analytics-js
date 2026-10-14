@@ -1,7 +1,8 @@
 import type { Context } from '../../core/context'
 import { isDeviceEvent } from './device-delivery'
 
-type Tombstone = { timestamp: number; deletes: string[]; cancelled: string[] }
+type Order = { timestamp: number; seq?: number }
+type Tombstone = Order & { deletes: string[]; cancelled: string[] }
 
 // Keep this outside event payloads. A persisted retry must remain cancelled even
 // if another analytics instance (or an old pagehide listener) saves it again.
@@ -10,8 +11,16 @@ export function deviceSupersession() {
   const key = (endpoint: string) => `cio-webpush:deleted:${endpoint}`
   const endpoint = (ctx: Context): string | undefined =>
     isDeviceEvent(ctx) ? ctx.event.context?.device?.token : undefined
-  const timestamp = (ctx: Context) =>
-    new Date(ctx.event.timestamp as string).getTime()
+  const order = (ctx: Context): Order => ({
+    timestamp:
+      ctx.event.context?.device?.webpush_event_ms ??
+      new Date(ctx.event.timestamp as string).getTime(),
+    seq: ctx.event.context?.device?.webpush_seq,
+  })
+  const compare = (a: Order, b: Order): number =>
+    a.seq && b.seq && a.seq !== b.seq
+      ? a.seq - b.seq
+      : a.timestamp - b.timestamp
   const read = (token: string): Tombstone | undefined => {
     try {
       const saved = localStorage.getItem(key(token))
@@ -27,7 +36,7 @@ export function deviceSupersession() {
     const deleted = read(token)
     return (
       !!deleted &&
-      (timestamp(ctx) < deleted.timestamp || deleted.cancelled.includes(ctx.id))
+      (compare(order(ctx), deleted) < 0 || deleted.cancelled.includes(ctx.id))
     )
   }
   const supersede = (
@@ -36,23 +45,24 @@ export function deviceSupersession() {
   ): void => {
     const token = endpoint(ctx)
     if (!token || ctx.event.event !== 'Device Deleted') return
-    const time = timestamp(ctx)
+    const current = order(ctx)
     const previous = read(token)
     // Retrying an old delete must not cancel a subsequent registration.
     if (
       previous &&
-      (time < previous.timestamp || previous.deletes.includes(ctx.id))
+      (compare(current, previous) < 0 || previous.deletes.includes(ctx.id))
     )
       return
     const removed = cancel(
       (item) =>
         endpoint(item) === token &&
         item.event.event === 'Device Created or Updated' &&
-        timestamp(item) <= time
+        compare(order(item), current) <= 0
     )
-    const tied = previous?.timestamp === time ? previous : undefined
+    const tied =
+      previous && compare(previous, current) === 0 ? previous : undefined
     const deleted: Tombstone = {
-      timestamp: time,
+      ...current,
       deletes: [...(tied?.deletes ?? []), ctx.id],
       cancelled: [
         ...(tied?.cancelled ?? []),

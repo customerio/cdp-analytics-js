@@ -1,13 +1,25 @@
 import { Context } from '../../../core/context'
 import { deviceSupersession } from '../device-supersession'
 
-const device = (event: string, id: string, time = 1000, token = 'endpoint') =>
+const device = (
+  event: string,
+  id: string,
+  time = 1000,
+  token = 'endpoint',
+  seq?: number
+) =>
   new Context(
     {
       type: 'track',
       event,
       timestamp: new Date(time),
-      context: { device: { type: 'web', token } },
+      context: {
+        device: {
+          type: 'web',
+          token,
+          ...(seq ? { webpush_seq: seq, webpush_event_ms: time } : {}),
+        },
+      },
     },
     id
   )
@@ -42,6 +54,33 @@ test('cancels known ties and older unseen retries, but allows fresh same-millise
   reloaded.supersede(deleted, cancel)
   expect(cancel).toHaveBeenCalledTimes(1)
   expect(reloaded.stale(fresh)).toBe(false)
+})
+
+test('sequence orders unseen same-millisecond retries and wins over rewritten timestamps', () => {
+  const state = deviceSupersession()
+  const old = device('Device Created or Updated', 'old', 1000, 'endpoint', 1)
+  const fresh = device('Device Created or Updated', 'fresh', 999, 'endpoint', 3)
+  const cancel = jest.fn((predicate: (ctx: Context) => boolean) =>
+    [old, fresh].filter(predicate)
+  )
+  state.supersede(
+    device('Device Deleted', 'delete', 1000, 'endpoint', 2),
+    cancel
+  )
+  expect(cancel.mock.results[0].value).toEqual([old])
+  expect(
+    state.stale(
+      device('Device Created or Updated', 'unseen', 1000, 'endpoint', 1)
+    )
+  ).toBe(true)
+  expect(state.stale(fresh)).toBe(false)
+  const reloaded = deviceSupersession()
+  expect(reloaded.stale(fresh)).toBe(false)
+  reloaded.supersede(
+    device('Device Deleted', 'retry', 2000, 'endpoint', 1),
+    cancel
+  )
+  expect(cancel).toHaveBeenCalledTimes(1)
 })
 
 test('retrying a strictly older delete never supersedes a newer registration', () => {

@@ -18,14 +18,19 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   throw new Error('Timed out waiting for re-registration')
 }
 
-async function setup(batching = false, persistent = false) {
+async function setup(
+  batching = false,
+  persistent = false,
+  userId: string | null = 'alice',
+  live = false
+) {
   const subscription = {
     endpoint,
     toJSON: () => ({ endpoint, keys: { p256dh: 'key', auth: 'key' } }),
     unsubscribe: jest.fn().mockResolvedValue(true),
   }
   const manager = {
-    getSubscription: jest.fn().mockResolvedValue(null),
+    getSubscription: jest.fn().mockResolvedValue(live ? subscription : null),
     subscribe: jest.fn().mockResolvedValue(subscription),
   }
   const registration = {
@@ -57,7 +62,7 @@ async function setup(batching = false, persistent = false) {
     { writeKey: 'test' },
     { disableClientPersistence: !persistent }
   )
-  analytics.user().id('alice')
+  analytics.user().id(userId)
   const destination = customerio(analytics, {
     apiKey: 'test',
     ...(batching
@@ -76,6 +81,10 @@ beforeEach(() => {
   jest.mocked(fetch).mockReset()
   jest.mocked(scheduleFlush).mockClear()
 })
+
+// reset cleanup runs in the background; let its acknowledgement/save settle
+// before the next test replaces fetch and localStorage.
+afterEach(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
 test('acceptance bridges separate bundles without leaking into serialized events', () => {
   const ctx = Context.system()
@@ -123,28 +132,30 @@ test.each([
   async ({ delay, relogin }) => {
     let time = 1700000000200
     const clock = jest.spyOn(Date, 'now').mockImplementation(() => time)
-    let lastUsed: number | undefined
+    let lastOrder = 0
+    let attached: string | undefined
     let dropped: Context | undefined
     let drop = true
     const requests: any[] = []
     jest.mocked(fetch).mockImplementation(async (_url, options) => {
       const event = JSON.parse(options!.body as string)
       requests.push(event)
-      const seconds = Math.floor(new Date(event.timestamp).getTime() / 1000)
+      const order = event.context.device.webpush_seq
       if (event.event === 'Device Deleted' && drop) {
         drop = false
         throw new Error('dropped request')
       }
-      // FIX-services-delivery contract: whole seconds; a tied/older delete is stale.
-      if (event.event === 'Device Created or Updated') lastUsed = seconds
-      if (event.event === 'Device Deleted' && seconds > (lastUsed ?? 0))
-        lastUsed = undefined
+      // Model the shared services contract (seq, then original browser ms).
+      if (order >= lastOrder) {
+        lastOrder = order
+        attached = event.event === 'Device Deleted' ? undefined : event.userId
+      }
       return { ok: true, status: 200 } as Response
     })
     const s = await setup()
     const send = s.destination.track!
     s.destination.track = async (ctx) => {
-      if (ctx.event.event === 'Device Deleted') dropped = ctx
+      if (ctx.event.event === 'Device Deleted' && !dropped) dropped = ctx
       return send(ctx)
     }
     await s.analytics.webPush!.subscribe()
@@ -164,8 +175,17 @@ test.each([
     expect(requests.map((event) => event.event).filter(Boolean)).toEqual([
       'Device Created or Updated',
       'Device Deleted',
+      'Device Deleted',
       'Device Created or Updated',
     ])
+    expect(
+      requests
+        .filter((event) => event.event?.startsWith('Device'))
+        .map((event) => event.context.device.webpush_seq)
+    ).toEqual([1, 2, 2, 3])
+    const deletes = requests.filter((event) => event.event === 'Device Deleted')
+    expect(deletes[0].context.device).toEqual(deletes[1].context.device)
+    expect(deletes[0].context.device.webpush_event_ms).toBe(1700000000900)
     expect(dropped).toBeDefined()
     expect(deviceAccepted(dropped!)).toBe(false)
     const deletedAt = requests.find(
@@ -181,12 +201,102 @@ test.each([
     // scheduled flush does; do not construct a new event for the retry.
     await s.destination.track!(dropped!)
     expect(requests[requests.length - 1].timestamp).toBe(deletedAt)
-    expect(lastUsed).toBeDefined()
+    expect(attached).toBe('alice')
     expect(
       JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!).userId
     ).toBe('alice')
     clock.mockRestore()
     await s.plugin.unload?.(Context.system(), s.analytics)
+  }
+)
+
+test('same-second logout detaches Alice before Bob registers with a higher sequence', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(1700000000200)
+  let attached: string | undefined
+  const states: (string | undefined)[] = []
+  const events: any[] = []
+  jest.mocked(fetch).mockImplementation(async (_url, options) => {
+    const event = JSON.parse(options!.body as string)
+    if (event.event?.startsWith('Device')) {
+      events.push(event)
+      attached = event.event === 'Device Deleted' ? undefined : event.userId
+      states.push(attached)
+    }
+    return { ok: true, status: 200 } as Response
+  })
+  const s = await setup()
+  await s.analytics.webPush!.subscribe()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  s.analytics.reset()
+  await waitFor(() => events.length === 2)
+  await s.analytics.identify('bob')
+  await waitFor(() => events.length === 3)
+  expect(states).toEqual(['alice', undefined, 'bob'])
+  expect(events.map((event) => event.context.device.webpush_seq)).toEqual([
+    1, 2, 3,
+  ])
+  expect(events.map((event) => event.context.device.webpush_event_ms)).toEqual([
+    1700000000200, 1700000000200, 1700000000200,
+  ])
+  await s.plugin.unload?.(Context.system(), s.analytics)
+  clock.mockRestore()
+})
+
+test.each([false, true])(
+  'failed logout reload retries original delete without an identity (live subscription=%s)',
+  async (live) => {
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(1700000000200)
+    jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+    const s = await setup()
+    await s.analytics.webPush!.subscribe()
+    jest.mocked(fetch).mockResolvedValue({ ok: false, status: 503 } as Response)
+    s.analytics.reset()
+    await waitFor(
+      () =>
+        !!JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+          .pendingDelete
+    )
+    await waitFor(() => jest.mocked(fetch).mock.calls.length === 2)
+    const failed = JSON.parse(
+      jest.mocked(fetch).mock.calls[1][1]!.body as string
+    )
+    await s.plugin.unload?.(Context.system(), s.analytics)
+    clock.mockReturnValue(1700000090000)
+    jest.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
+    const reloaded = await setup(false, false, null, live)
+    await waitFor(() => jest.mocked(fetch).mock.calls.length === 3)
+    const retried = JSON.parse(
+      jest.mocked(fetch).mock.calls[2][1]!.body as string
+    )
+    expect(retried.event).toBe('Device Deleted')
+    expect(retried.userId).toBe('alice')
+    expect(retried.anonymousId).toBeNull()
+    expect(retried.context.device).toEqual(failed.context.device)
+    expect(retried.timestamp).toBe(failed.timestamp)
+    expect(retried.context.device).toMatchObject({
+      webpush_event_ms: 1700000000200,
+      webpush_seq: 2,
+    })
+    await waitFor(
+      () =>
+        !JSON.parse(localStorage.getItem('cio-webpush:/cio-webpush-sw.js')!)
+          .pendingDelete
+    )
+    await reloaded.analytics.identify('bob')
+    await reloaded.analytics.webPush!.subscribe()
+    const created = JSON.parse(
+      jest
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([, options]) =>
+            JSON.parse(options!.body as string).event ===
+            'Device Created or Updated'
+        )
+        .pop()![1]!.body as string
+    )
+    expect(created.context.device.webpush_seq).toBeGreaterThan(2)
+    await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+    clock.mockRestore()
   }
 )
 

@@ -2,27 +2,26 @@
 
 ## Ordering contract with Journeys
 
-`Device Deleted` and `Device Created or Updated` carry an explicit top-level
-`timestamp` set when their SDK event is created. Destination retries retain the
-original event and timestamp, not the time of the retry. Created events do not
-supply a separate `last_used` value.
+Every web `Device Deleted` and `Device Created or Updated` includes
+`context.device.webpush_event_ms` (the original browser epoch milliseconds) and
+`context.device.webpush_seq` (an increasing per-endpoint integer). The sequence
+is persisted in localStorage independently of the current owner, so clearing an
+owner or switching worker paths does not restart it. Events use the current
+browser time, never an artificial future offset. Their top-level `timestamp`
+uses that same original time; Created events do not supply `last_used`.
 
-The coordinated server-side guard in services [#29691](https://github.com/customerio/services/pull/29691)
-protects newer registrations by ignoring web deletes whose
-timestamp is less than or equal to the device's latest update. The destination,
-edge and services compare **whole seconds**. Thus an old logout delete cannot
-remove a newer registration for the same person/endpoint, including events in
-the same second. **Registration does not transfer an endpoint between people.**
-The previous person retains it until their Delete is processed; the SDK queues
-and retries that Delete. Services has no endpoint-to-person index and no
-registration tombstone that rejects a Create arriving after a Delete.
+Destination retries and plugin recovery after reload retain the event's original
+sequence and time. Pipelines and edge must forward both device-context fields
+unchanged, and the coordinated services guard must order by sequence, then
+milliseconds, ignoring only strictly older events. This distinguishes a genuine
+same-second logout from an old Delete retried after a newer registration.
+SDK metadata alone cannot fix a server still using whole-second ordering.
 
-Do not future-date these events: services clamps future registration times to
-its clock. The accepted server trade-off is that a genuine logout/unsubscribe in
-the same second as registration is ignored. Client/server clock skew and clock
-rollback are not solved by this contract. The stale-delete protection requires
-the coordinated services deployment; SDK timestamping alone cannot protect an
-unmodified server from a delete already in flight or in its retry queue.
+**Registration does not itself transfer an endpoint between people.** The SDK
+sends the previous owner's Delete and requires its HTTP acknowledgement before
+registering the next owner. This acknowledgement is not proof of downstream
+Journeys processing; reliable downstream ordering requires the coordinated
+Pipelines, edge and services deployment.
 
 Before sending any web Delete (including while offline), the destination removes
 queued Creates for that endpoint from both analytics and destination retry
@@ -34,11 +33,10 @@ millisecond. Plugin identity mutations are serialized, and queued subscribe
 operations re-read current identity before creating their event.
 
 This is client-side retry protection, not a server uniqueness guarantee. A
-request already dispatched cannot be recalled, and services #29691 does not
-reject a late in-flight Create or detach another person's device. Reliable
-cross-reload cancellation requires available localStorage. Clearing browser
-storage, clock rollback and independent concurrent tabs are not fully ordered
-by this mechanism.
+request already dispatched cannot be recalled. Reliable cross-reload recovery
+requires available localStorage. Clearing browser storage and independent
+concurrent tabs are not fully ordered by this mechanism. Sequence ordering also
+protects client retry cancellation when the wall clock moves backwards.
 
 ## Acceptance and recovery
 
@@ -56,8 +54,17 @@ During an attempt the local endpoint/owner record has `registered: false`.
 the browser. Destination retries still run, and registration remains retryable
 through another `subscribe()`, identify, a persisted pageshow, a worker change
 message, or a full page load. A successful acknowledged attempt clears the flag.
-The owner remains available for reset/unsubscribe cleanup. This does not change
-native device events or ordinary analytics delivery.
+The owner remains available for reset/unsubscribe cleanup. A pending Create's
+ordering fields are saved with that record and reused on recovery.
+
+Before sending a Delete, the plugin persists `pendingDelete` with its original
+sequence/time and keeps the previous owner until HTTP acknowledgement. A queued
+or failed Delete does not clear the record. On reload it retries cleanup even
+without an identified visitor or a live push subscription; identify, pageshow
+and subscribe can also retry. Successful cleanup clears the pending record and
+permits the next registration. If localStorage is denied, recovery is limited
+to the current page's memory. This does not change native device events or
+ordinary analytics delivery.
 
 ## Page lifetime
 

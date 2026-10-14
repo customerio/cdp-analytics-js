@@ -91,10 +91,33 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     new URL(workerUrl, location.href).pathname
   }`
   let serviceWorker: ServiceWorkerContainer | undefined
+  type Order = { webpush_event_ms: number; webpush_seq: number }
   type Device = {
     endpoint: string
     userId: string | null
     registered?: false
+    pendingDelete?: Order
+    pendingCreate?: Order
+  }
+  // Keep counters after logout/unsubscribe and across worker path changes.
+  const orders = new Map<string, number>()
+  const nextOrder = (endpoint: string): Order => {
+    const key = `cio-webpush:seq:${endpoint}`
+    let seq = orders.get(endpoint) ?? 0
+    try {
+      const persisted = Number(localStorage.getItem(key))
+      if (Number.isSafeInteger(persisted) && persisted > seq) seq = persisted
+    } catch {
+      /* Persistence is optional in private browsing. */
+    }
+    seq++
+    orders.set(endpoint, seq)
+    try {
+      localStorage.setItem(key, String(seq))
+    } catch {
+      /* Persistence is optional in private browsing. */
+    }
+    return { webpush_event_ms: Date.now(), webpush_seq: seq }
   }
   let memory: Device | null = null
   const storageKey = () =>
@@ -176,21 +199,22 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   }
   const live = async () =>
     (await registration())?.pushManager.getSubscription() ?? null
-  const device = (token: string, userId?: string) => ({
-    ...(userId ? { userId } : {}),
-    // Journeys compares floored seconds and ignores deletes <= last_used.
-    // Never future-date: registration timestamps are clamped by the server.
-    // This event time is serialized once and retained by destination retries.
-    timestamp: new Date(Date.now()),
-    context: { device: { token, type: 'web' } },
+  const device = (token: string, userId: string, order: Order) => ({
+    userId,
+    timestamp: new Date(order.webpush_event_ms),
+    context: { device: { token, type: 'web', ...order } },
   })
   const deleteDevice = async (previous: Device) => {
-    if (previous.userId)
-      await analytics.track(
+    if (previous.userId) {
+      // Write before sending. An unacknowledged logout must survive page close,
+      // including reloads without an identity or live browser subscription.
+      const order = previous.pendingDelete ?? nextOrder(previous.endpoint)
+      save({ ...previous, pendingDelete: order })
+      const result = await analytics.track(
         'Device Deleted',
         {},
         {
-          ...device(previous.endpoint, previous.userId),
+          ...device(previous.endpoint, previous.userId, order),
           // Journeys deletes by the stored owner's userId alone. Explicit null
           // keeps the current visitor's anonymous ID off the previous owner's
           // event (undefined would be filled during normalization), and a string
@@ -198,6 +222,11 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           anonymousId: null,
         }
       )
+      if (!deviceAccepted(result))
+        throw new Error(
+          'Web push device deletion was not accepted; retry cleanup.'
+        )
+    }
   }
   const reset = () => {
     background(
@@ -219,7 +248,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       const previous = stored()
       if (
         previous &&
-        (previous.endpoint !== value.endpoint || previous.userId !== userId)
+        (previous.pendingDelete ||
+          previous.endpoint !== value.endpoint ||
+          previous.userId !== userId)
       ) {
         // A path change may have switched storage keys. Persist the owner at
         // the current path before deletion so a failed request survives reload.
@@ -229,7 +260,20 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       }
       // Retain the owner for deletion, but never treat a queued/failed attempt
       // as a registration. Reload, identify and pageshow can retry it.
-      save({ endpoint: value.endpoint, userId, registered: false })
+      const current = stored()
+      const order =
+        current?.endpoint === value.endpoint &&
+        current.userId === userId &&
+        !current.pendingDelete &&
+        current.pendingCreate
+          ? current.pendingCreate
+          : nextOrder(value.endpoint)
+      save({
+        endpoint: value.endpoint,
+        userId,
+        registered: false,
+        pendingCreate: order,
+      })
       const result = await analytics.track(
         'Device Created or Updated',
         {
@@ -237,7 +281,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           webpush_auth: value.keys.auth,
           user_agent: navigator.userAgent,
         },
-        device(value.endpoint, userId)
+        device(value.endpoint, userId, order)
       )
       if (!deviceAccepted(result))
         throw new Error(
@@ -253,8 +297,17 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     // reset's deletion may still be settling when identify fires. Inspect the
     // record only after earlier mutations have cleared the previous owner.
     await mutations
+    if (stored()?.pendingDelete) {
+      await mutate(async () => {
+        const previous = stored()
+        if (!previous?.pendingDelete) return
+        await deleteDevice(previous)
+        save({ endpoint: previous.endpoint, userId: null })
+      })
+    }
     const previous = stored()
     if (
+      analytics.user().id() &&
       subscription &&
       (force ||
         previous?.endpoint !== subscription.endpoint ||
@@ -418,7 +471,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         if (!endpoint) return
         const owner = previous?.userId ?? analytics.user().id() ?? null
         // No known owner means no device event was registered to delete.
-        const record = { endpoint, userId: owner }
+        const record = { ...previous, endpoint, userId: owner }
         save(record)
         await deleteDevice(record)
         save(null)

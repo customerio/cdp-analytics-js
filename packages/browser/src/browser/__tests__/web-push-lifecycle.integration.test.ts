@@ -352,7 +352,15 @@ test('a failed destination rotation retains its owner and selection for reload/r
   )
   expect(
     localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
-  ).toBe(previous)
+  ).not.toBe(previous)
+  expect(
+    JSON.parse(
+      localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
+    )
+  ).toMatchObject({
+    ...JSON.parse(previous),
+    pendingDelete: { webpush_event_ms: expect.any(Number), webpush_seq: 1 },
+  })
   track.mockRestore()
   await first.analytics.deregister(name)
 
@@ -389,7 +397,11 @@ test('a new destination subscription remains reachable when device deletion fail
     JSON.parse(
       localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
     )
-  ).toEqual({ endpoint: b.old.value.endpoint, userId: 'A' })
+  ).toMatchObject({
+    endpoint: b.old.value.endpoint,
+    userId: 'A',
+    pendingDelete: { webpush_seq: 2, webpush_event_ms: expect.any(Number) },
+  })
   track.mockRestore()
   await first.analytics.deregister(name)
 
@@ -535,11 +547,20 @@ async function until(check: () => boolean) {
   throw new Error('Device event did not settle')
 }
 const eventShape = (events: CustomerioEvent[]) =>
-  events.map((event) => ({
-    event: event.event,
-    userId: event.userId,
-    device: event.context?.device,
-  }))
+  events.map((event) => {
+    const device = event.context?.device
+    expect(device).toMatchObject({
+      webpush_event_ms: expect.any(Number),
+      webpush_seq: expect.any(Number),
+    })
+    expect(device!.webpush_event_ms).toBeLessThanOrEqual(Date.now())
+    expect(Number.isSafeInteger(device!.webpush_seq)).toBe(true)
+    return {
+      event: event.event,
+      userId: event.userId,
+      device: { token: device!.token, type: device!.type },
+    }
+  })
 // Request bodies sent by the real Customer.io destination, after its normalize.
 const sent = (event: string) =>
   jest
