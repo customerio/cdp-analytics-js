@@ -15,13 +15,13 @@ import { acceptDevice, isDeviceEvent } from './device-delivery'
 
 type DeliveryStrategy =
   | {
-      strategy?: 'standard'
-      config?: StandardDispatcherConfig
-    }
+    strategy?: 'standard'
+    config?: StandardDispatcherConfig
+  }
   | {
-      strategy?: 'batching'
-      config?: BatchingDispatchConfig
-    }
+    strategy?: 'batching'
+    config?: BatchingDispatchConfig
+  }
 
 export type CustomerioSettings = {
   apiKey: string
@@ -65,9 +65,9 @@ export function customerio(
   const buffer = analytics.options.disableClientPersistence
     ? new PriorityQueue<Context>(analytics.queue.queue.maxAttempts, [])
     : new PersistedPriorityQueue(
-        analytics.queue.queue.maxAttempts,
-        `dest-Customer.io-Data-Pipelines`
-      )
+      analytics.queue.queue.maxAttempts,
+      `dest-Customer.io-Data-Pipelines`
+    )
 
   const inflightEvents = new Set<Context>()
   const flushing = false
