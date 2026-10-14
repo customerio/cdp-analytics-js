@@ -84,8 +84,7 @@ export function customerio(
 
   // Device lifecycle calls require a real HTTP acknowledgement, even when
   // ordinary analytics events use fire-and-forget batching.
-  const deviceClient =
-    deliveryStrategy?.strategy === 'batching' ? standard() : client
+  const deviceClient = standard({ keepalive: true })
 
   async function send(ctx: Context): Promise<Context> {
     if (isOffline()) {
