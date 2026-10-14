@@ -246,7 +246,9 @@
 
   // Evaluation happens on every worker startup, not only installation. Event
   // waitUntil hooks below anchor this work for the lifetime of each wakeup.
-  const startupMetrics = retryMetrics()
+  // Startup may itself be a sync wakeup; do not reset that tag's retry budget.
+  // Push/click enqueues schedule sync, and sync rejection requests later retries.
+  const startupMetrics = retryMetrics(false)
   self.addEventListener('sync', (event) => {
     if (event.tag === metricSyncTag) {
       event.waitUntil(

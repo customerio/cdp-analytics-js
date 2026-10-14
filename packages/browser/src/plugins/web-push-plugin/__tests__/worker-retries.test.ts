@@ -167,6 +167,14 @@ describe('web push metric outbox', () => {
     ).rejects.toThrow('metrics pending')
     expect(s.fetch).toHaveBeenCalledTimes(2)
     expect(s.sync.register).not.toHaveBeenCalled()
+    jest.spyOn(Date, 'now').mockReturnValue(1700000090000)
+    const restarted = createWorker(worker, undefined, {}, s.indexedDB)
+    restarted.fetch.mockRejectedValue(new Error('offline'))
+    await restarted.startup
+    await expect(
+      restarted.invoke('sync', { tag: 'cio-webpush-metrics' })
+    ).rejects.toThrow('metrics pending')
+    expect(restarted.sync.register).not.toHaveBeenCalled()
   })
 
   test('one wakeup tries each record only once even when a slow failure outlasts its lease', async () => {
