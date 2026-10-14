@@ -155,6 +155,34 @@ describe('web push metric outbox', () => {
     expect(s.fetch).toHaveBeenCalledTimes(2)
   })
 
+  test('sync failures do not re-register their own tag and reset browser retries', async () => {
+    const s = setup()
+    await s.startup
+    s.fetch.mockRejectedValue(new Error('offline'))
+    await s.invoke('notificationclick', click())
+    s.sync.register.mockClear()
+    jest.spyOn(Date, 'now').mockReturnValue(1700000030000)
+    await expect(
+      s.invoke('sync', { tag: 'cio-webpush-metrics' })
+    ).rejects.toThrow('metrics pending')
+    expect(s.fetch).toHaveBeenCalledTimes(2)
+    expect(s.sync.register).not.toHaveBeenCalled()
+  })
+
+  test('one wakeup tries each record only once even when a slow failure outlasts its lease', async () => {
+    const s = setup()
+    await s.startup
+    let time = 1700000000000
+    jest.spyOn(Date, 'now').mockImplementation(() => time)
+    s.fetch.mockImplementation(async () => {
+      time += 3600001
+      throw new Error('slow failure')
+    })
+    await s.invoke('notificationclick', click())
+    expect(s.fetch).toHaveBeenCalledTimes(1)
+    expect((await readMetrics(s.indexedDB))[0].attempts).toBe(1)
+  })
+
   test('backoff caps at one hour', async () => {
     const s = setup()
     await s.startup
