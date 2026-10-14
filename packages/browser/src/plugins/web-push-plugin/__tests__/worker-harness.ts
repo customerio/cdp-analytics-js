@@ -1,7 +1,21 @@
 import fs from 'fs'
 import path from 'path'
+import v8 from 'v8'
 import vm from 'vm'
 import { IDBFactory } from 'fake-indexeddb'
+
+// CI runs Node 14; fake-indexeddb calls these Node 17+ globals at runtime.
+const objectWithHasOwn = Object as ObjectConstructor & {
+  hasOwn?: (o: object, key: PropertyKey) => boolean
+}
+if (!objectWithHasOwn.hasOwn) {
+  objectWithHasOwn.hasOwn = (o, key) =>
+    Object.prototype.hasOwnProperty.call(o, key)
+}
+if (typeof globalThis.structuredClone !== 'function') {
+  globalThis.structuredClone = (<T>(value: T): T =>
+    v8.deserialize(v8.serialize(value))) as typeof structuredClone
+}
 
 // The build ships this file unchanged; test the exact service worker source.
 export const worker = path.join(__dirname, '../cio-webpush-sw.js')
@@ -94,6 +108,29 @@ export async function readMetrics(indexedDB: IDBFactory): Promise<any[]> {
         db.close()
       }
       request.onerror = () => reject(request.error)
+    }
+  })
+}
+
+// Writes outbox records directly; each worker event rereads the whole outbox,
+// so building a large one through events is quadratic and slow on Node 14.
+export async function seedMetrics(
+  indexedDB: IDBFactory,
+  records: any[]
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('cio-webpush-metrics', 1)
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const db = open.result
+      const transaction = db.transaction('events', 'readwrite')
+      const store = transaction.objectStore('events')
+      records.forEach((record) => store.put(record))
+      transaction.oncomplete = () => {
+        db.close()
+        resolve()
+      }
+      transaction.onerror = () => reject(transaction.error)
     }
   })
 }

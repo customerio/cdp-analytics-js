@@ -1,6 +1,11 @@
 /** @jest-environment node */
 import { IDBFactory } from 'fake-indexeddb'
-import { createWorker, readMetrics, worker } from './worker-harness'
+import {
+  createWorker,
+  readMetrics,
+  seedMetrics,
+  worker,
+} from './worker-harness'
 
 beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(1700000000000))
 afterEach(() => jest.restoreAllMocks())
@@ -22,6 +27,25 @@ describe('web push metric outbox', () => {
       data: { delivery_id, device_id, link: '/destination' },
     },
   })
+  // An outbox record as notificationclick stores it for click(`delivery-${i}`).
+  const opened = (i: number, done: boolean) => {
+    const url = 'https://track.customer.io/push/events'
+    const delivery_id = `delivery-${i}`
+    return {
+      key: JSON.stringify([url, delivery_id, 'opened', 'endpoint']),
+      url,
+      body: {
+        delivery_id,
+        device_id: 'endpoint',
+        event: 'opened',
+        timestamp: 1700000000,
+      },
+      created: 1700000000000 - 1000 + i,
+      attempts: 0,
+      nextAttempt: 1700000000000,
+      done,
+    }
+  }
 
   test('HTTP 5xx is queued, backs off, and retries the original report on sync', async () => {
     const s = setup()
@@ -200,13 +224,18 @@ describe('web push metric outbox', () => {
   test('acknowledged receipts are bounded to 1000 records', async () => {
     const s = setup()
     await s.startup
-    for (let i = 0; i < 1001; i++) {
-      await s.invoke('notificationclick', click(`delivery-${i}`))
-    }
+    await seedMetrics(
+      s.indexedDB,
+      Array.from({ length: 1000 }, (_, i) => opened(i, true))
+    )
+    await s.invoke('notificationclick', click('delivery-1000'))
     const records = await readMetrics(s.indexedDB)
     expect(records).toHaveLength(1000)
     expect(records.every((record) => record.done)).toBe(true)
-  }, 30000)
+    const deliveries = records.map((record) => record.body.delivery_id)
+    expect(deliveries).not.toContain('delivery-0')
+    expect(deliveries).toContain('delivery-1000')
+  })
 
   test.each([400, 401, 403, 404, 410, 422])(
     'HTTP %s is final and suppresses replay',
@@ -297,10 +326,10 @@ describe('web push metric outbox', () => {
   test('activate completes while a large startup backlog is stuck sending', async () => {
     const s = setup()
     await s.startup
-    s.fetch.mockRejectedValue(new Error('offline'))
-    for (let i = 0; i < 100; i++) {
-      await s.invoke('notificationclick', click(`delivery-${i}`))
-    }
+    await seedMetrics(
+      s.indexedDB,
+      Array.from({ length: 100 }, (_, i) => opened(i, false))
+    )
     jest.spyOn(Date, 'now').mockReturnValue(1700000030000)
     let started!: () => void
     const sending = new Promise<void>((resolve) => {
