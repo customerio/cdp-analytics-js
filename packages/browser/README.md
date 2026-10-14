@@ -125,7 +125,10 @@ allowed for development), without a redirect. A root worker has root scope. To u
 scope is `/notifications/`. Do not overwrite another application's service worker:
 use a dedicated scope or integrate the handlers into your existing worker and
 pass that worker's URL. Subscribe rejects a different worker at the same default
-scope before registering or replacing it. The ordinary notification permission
+scope before registering or replacing it. The plugin registers its worker as a
+classic script, so if your existing worker is a module service worker
+(`type: 'module'`), leave it as it is and serve `cio-webpush-sw.js` in a dedicated
+scope instead. The ordinary notification permission
 request still happens from your user action.
 
 The worker reads the metrics endpoint from its `?track=` query. When integrating
