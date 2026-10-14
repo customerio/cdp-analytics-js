@@ -122,18 +122,25 @@ request still happens from your user action.
 
 The worker reads the metrics endpoint from its `?track=` query. When integrating
 with an existing worker, preserve this query in every host registration call;
-registering the bare URL later drops the endpoint and disables delivered/opened
-metrics. Rebuild/copy the push handlers when updating the SDK.
+registering the bare URL later disables new delivered/opened metrics, but queued
+reports retain and retry their original endpoint. Rebuild/copy the push handlers when updating the SDK.
 
-Delivered/opened reports are saved in an IndexedDB outbox before sending. Failed
-HTTP responses and offline requests retry on worker startup, push, notification
+Delivered/opened reports are saved in an IndexedDB outbox before sending. Offline
+requests and retryable HTTP failures retry on worker startup, push, notification
 click, and Background Sync (where supported), with 30-second exponential backoff
-capped at one hour. Notification display and navigation do not wait for reporting.
+capped at one hour. HTTP 4xx other than 408/429 are final and suppress replay while
+the receipt is retained. Background Sync is registered only while reports remain
+pending. Activation, notification display and navigation do not wait for reporting.
+An opened report waits for its queued delivered report to finish (including final
+rejection); unrelated deliveries can still proceed.
 The outbox retains at most 100 pending reports and 1,000 total records for seven
 days; overflow evicts the oldest pending report or acknowledged receipt. Repeated
 reports for the same delivery, event, and device (regardless of button) are
 suppressed while their record is retained. Retries preserve the first timestamp
-and action. Storage denial prevents durable reporting but not notifications.
+and action. If storage is unavailable or saving fails, the worker instead makes
+one direct best-effort send per event, without durable retries or deduplication.
+Older browsers without `AbortSignal.timeout` send without an SDK request timeout.
+The worker's implementation is scoped privately for `importScripts` hosts.
 Browser termination or a lost HTTP acknowledgement can still replay an accepted
 request; end-to-end exactly-once reporting requires server-side idempotency too.
 
