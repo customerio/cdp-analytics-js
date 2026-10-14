@@ -62,7 +62,7 @@ describe('web push metric outbox', () => {
     })
     await expect(
       s.invoke('sync', { tag: 'cio-webpush-metrics' })
-    ).rejects.toThrow('metrics pending')
+    ).resolves.toEqual([undefined])
     expect(s.fetch).toHaveBeenCalledTimes(1)
     jest.spyOn(Date, 'now').mockReturnValue(1700000030000)
     await s.invoke('sync', { tag: 'cio-webpush-metrics' })
@@ -173,7 +173,8 @@ describe('web push metric outbox', () => {
     await restarted.startup
     await expect(
       restarted.invoke('sync', { tag: 'cio-webpush-metrics' })
-    ).rejects.toThrow('metrics pending')
+    ).resolves.toEqual([undefined])
+    expect(restarted.fetch).toHaveBeenCalledTimes(1)
     expect(restarted.sync.register).not.toHaveBeenCalled()
   })
 
