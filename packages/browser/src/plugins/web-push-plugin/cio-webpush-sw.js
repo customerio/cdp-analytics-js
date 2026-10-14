@@ -157,6 +157,7 @@
       records.some((record) => !record.done)
     )
     if (pending && scheduleSync) await scheduleMetricSync()
+    return pending && attempted.size > 0
   }
 
   function sendMetric(url, body) {
@@ -190,7 +191,7 @@
           (database) => database.name === 'cio-webpush-metrics'
         )
       )
-        await flushMetrics(scheduleSync)
+        return flushMetrics(scheduleSync)
     })
   }
 
@@ -255,13 +256,10 @@
         (async () => {
           // Let rejection ask the browser to retry this sync. Re-registering
           // its tag here resets the browser's retry budget on every failure.
-          await retryMetrics(false)
-          const pending = await updateMetrics((store, records) =>
-            records.some((record) => !record.done)
-          )
-          // Reject while work remains so the browser can schedule another sync,
-          // including when this wakeup happened before our backoff elapsed.
-          if (pending) throw new Error('Customer.io web push metrics pending')
+          const failed = await retryMetrics(false)
+          // Spend browser retries only when this wakeup actually attempted work.
+          // Records merely waiting out backoff can wait for the next push/click.
+          if (failed) throw new Error('Customer.io web push metrics pending')
         })()
       )
     }
