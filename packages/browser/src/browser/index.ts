@@ -237,7 +237,12 @@ async function registerPlugins(
     webPushSettings && webPushSettings.enabled !== false
       ? await import(
           /* webpackChunkName: "webPushPluginChunk" */ '../plugins/web-push-plugin'
-        ).then((mod) => mod.WebPushPlugin(webPushSettings))
+        )
+          .then((mod) => mod.WebPushPlugin(webPushSettings))
+          .catch((error) => {
+            console.warn('Customer.io web push plugin failed to load:', error)
+            return undefined
+          })
       : undefined
 
   const toRegister = [
