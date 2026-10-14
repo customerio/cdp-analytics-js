@@ -91,7 +91,8 @@
     }
   }
 
-  async function flushMetrics() {
+  async function flushMetrics(scheduleSync = true) {
+    const attempted = new Set()
     // Each pass visits at most the queue limit; failed records become ineligible
     // until a later wakeup, with exponential backoff capped at one hour.
     for (let i = 0; i < maxPendingMetrics; i++) {
@@ -99,6 +100,7 @@
         const due = records.find(
           (entry) =>
             !entry.done &&
+            !attempted.has(entry.key) &&
             entry.nextAttempt <= now &&
             // Never let a fresh open overtake its delivery's retry/backoff.
             !(
@@ -122,6 +124,7 @@
         return due
       })
       if (!record) break
+      attempted.add(record.key)
       try {
         const response = await sendMetric(record.url, record.body)
         const terminal =
@@ -136,13 +139,24 @@
           if (current) store.put({ ...current, done: true })
         })
       } catch (error) {
+        // Back off from completion, not request start: a slow failed request
+        // must not already be due when the next queued flush starts.
+        await updateMetrics((store, records, now) => {
+          const current = records.find((entry) => entry.key === record.key)
+          if (current && !current.done && current.attempts === record.attempts)
+            store.put({
+              ...current,
+              nextAttempt:
+                now + Math.min(3600000, 30000 * 2 ** (current.attempts - 1)),
+            })
+        })
         console.warn('Customer.io web push metric failed:', error)
       }
     }
     const pending = await updateMetrics((store, records) =>
       records.some((record) => !record.done)
     )
-    if (pending) await scheduleMetricSync()
+    if (pending && scheduleSync) await scheduleMetricSync()
   }
 
   function sendMetric(url, body) {
@@ -165,7 +179,7 @@
     return metricTasks
   }
 
-  function retryMetrics() {
+  function retryMetrics(scheduleSync = true) {
     return runMetricTask(async () => {
       // Avoid creating a database on untracked sites, but drain an existing
       // outbox using each record's original URL after re-registration.
@@ -176,7 +190,7 @@
           (database) => database.name === 'cio-webpush-metrics'
         )
       )
-        await flushMetrics()
+        await flushMetrics(scheduleSync)
     })
   }
 
@@ -237,7 +251,9 @@
     if (event.tag === metricSyncTag) {
       event.waitUntil(
         (async () => {
-          await retryMetrics()
+          // Let rejection ask the browser to retry this sync. Re-registering
+          // its tag here resets the browser's retry budget on every failure.
+          await retryMetrics(false)
           const pending = await updateMetrics((store, records) =>
             records.some((record) => !record.done)
           )
