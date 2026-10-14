@@ -71,6 +71,23 @@ describe('web push metric outbox', () => {
     expect((await readMetrics(s.indexedDB))[0].done).toBe(true)
   })
 
+  test('sync resolves after sending due work when remaining reports are only in backoff', async () => {
+    const s = setup()
+    await s.startup
+    await seedMetrics(s.indexedDB, [
+      { ...opened(1, false), nextAttempt: 1700003600000 },
+      opened(2, false),
+    ])
+    await expect(
+      s.invoke('sync', { tag: 'cio-webpush-metrics' })
+    ).resolves.toEqual([undefined])
+    expect(s.fetch).toHaveBeenCalledTimes(1)
+    expect(
+      (await readMetrics(s.indexedDB)).filter((entry) => !entry.done)
+    ).toHaveLength(1)
+    expect(s.sync.register).not.toHaveBeenCalled()
+  })
+
   test('offline reports survive worker restart and retry on startup', async () => {
     const s = setup()
     await s.startup
