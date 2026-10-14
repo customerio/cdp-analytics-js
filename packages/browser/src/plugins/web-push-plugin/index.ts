@@ -32,12 +32,16 @@ export function urlBase64ToUint8Array(value: string): Uint8Array {
   return Uint8Array.from(decoded, (char) => char.charCodeAt(0))
 }
 
+function hasPushSupport(): boolean {
+  return (
+    'serviceWorker' in navigator &&
+    'PushManager' in window &&
+    'Notification' in window
+  )
+}
+
 function supported(): void {
-  if (
-    !('serviceWorker' in navigator) ||
-    !('PushManager' in window) ||
-    !('Notification' in window)
-  ) {
+  if (!hasPushSupport()) {
     throw new Error(
       'Web push requires a supported browser on HTTPS or localhost.'
     )
@@ -244,6 +248,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     })
   }
   const reconcile = async (force = false) => {
+    if (!hasPushSupport()) return
     const subscription = await live()
     // reset's deletion may still be settling when identify fires. Inspect the
     // record only after earlier mutations have cleared the previous owner.
@@ -454,8 +459,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       if (serviceWorker) {
         serviceWorker.addEventListener('message', message)
         // Only inspect an existing subscription; loading never registers or prompts.
-        if ('PushManager' in window && 'Notification' in window)
-          background(reconcile())
+        if (hasPushSupport()) background(reconcile())
       }
       return Promise.resolve()
     },
