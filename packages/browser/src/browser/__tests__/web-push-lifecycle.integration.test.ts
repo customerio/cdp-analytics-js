@@ -387,13 +387,26 @@ test('a failed destination rotation retains its owner and selection for reload/r
   )
   expect(
     localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')
-  ).toBe(previous)
+  ).not.toBe(previous)
+  expect(
+    JSON.parse(
+      localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
+    )
+  ).toMatchObject({
+    ...JSON.parse(previous),
+    pendingDelete: {
+      webpush_event_ms: expect.any(Number),
+      webpush_seq: expect.any(Number),
+    },
+  })
   track.mockRestore()
   await first.analytics.deregister(name)
 
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30001)
   const reloaded = await load()
   reloaded.analytics.reset()
   await until(() => reloaded.events.length === 1)
+  clock.mockRestore()
   expect(eventShape(reloaded.events)).toEqual([
     {
       event: 'Device Deleted',
@@ -424,17 +437,22 @@ test('a new destination subscription remains reachable when device deletion fail
     JSON.parse(
       localStorage.getItem('cio-webpush:/notifications/cio-webpush-sw.js')!
     )
-  ).toEqual({
+  ).toMatchObject({
     endpoint: b.old.value.endpoint,
     userId: 'A',
     attributesFingerprint: JSON.stringify({
       ...deviceAttributes(navigator),
       webpush_expiration_time: null,
     }),
+    pendingDelete: {
+      webpush_seq: expect.any(Number),
+      webpush_event_ms: expect.any(Number),
+    },
   })
   track.mockRestore()
   await first.analytics.deregister(name)
 
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30001)
   const reloaded = await load()
   await until(() => reloaded.events.length === 2)
   expect(eventShape(reloaded.events)).toEqual([
@@ -449,6 +467,7 @@ test('a new destination subscription remains reachable when device deletion fail
       device: { token: b.destination.value.endpoint, type: 'web' },
     },
   ])
+  clock.mockRestore()
 })
 
 test('a stored destination owner survives failed browser subscription without deletion', async () => {
@@ -581,11 +600,20 @@ async function until(check: () => boolean) {
   throw new Error('Device event did not settle')
 }
 const eventShape = (events: CustomerioEvent[]) =>
-  events.map((event) => ({
-    event: event.event,
-    userId: event.userId,
-    device: event.context?.device,
-  }))
+  events.map((event) => {
+    const device = event.context?.device
+    expect(device).toMatchObject({
+      webpush_event_ms: expect.any(Number),
+      webpush_seq: expect.any(Number),
+    })
+    expect(device!.webpush_event_ms).toBeLessThanOrEqual(Date.now())
+    expect(Number.isSafeInteger(device!.webpush_seq)).toBe(true)
+    return {
+      event: event.event,
+      userId: event.userId,
+      device: { token: device!.token, type: device!.type },
+    }
+  })
 // Request bodies sent by the real Customer.io destination, after its normalize.
 const sent = (event: string) =>
   jest

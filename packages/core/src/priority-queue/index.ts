@@ -60,6 +60,8 @@ export class PriorityQueue<Item extends QueueItem = QueueItem> extends Emitter {
     const timeout = backoff({ attempt: attempt - 1 })
 
     setTimeout(() => {
+      // A superseded operation may have been removed while backing off.
+      if (!this.future.some((f) => f.id === item.id)) return
       this.queue.push(item)
       // remove from future list
       this.future = this.future.filter((f) => f.id !== item.id)
@@ -87,6 +89,13 @@ export class PriorityQueue<Item extends QueueItem = QueueItem> extends Emitter {
       Boolean(this.queue.find((i) => i.id === item.id)) ||
       Boolean(this.future.find((i) => i.id === item.id))
     )
+  }
+
+  remove(predicate: (item: Item) => boolean): Item[] {
+    const removed = [...this.queue, ...this.future].filter(predicate)
+    this.queue = this.queue.filter((item) => !predicate(item))
+    this.future = this.future.filter((item) => !predicate(item))
+    return removed
   }
 
   pop(): Item | undefined {

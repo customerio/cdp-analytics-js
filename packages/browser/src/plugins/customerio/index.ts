@@ -11,16 +11,23 @@ import batch, { BatchingDispatchConfig } from './batched-dispatcher'
 import standard, { StandardDispatcherConfig } from './fetch-dispatcher'
 import { normalize } from './normalize'
 import { scheduleFlush } from './schedule-flush'
+import {
+  acceptDevice,
+  deviceDeliveryEvent,
+  finalizeDevice,
+  isDeviceEvent,
+} from './device-delivery'
+import { deviceSupersession } from './device-supersession'
 
 type DeliveryStrategy =
   | {
-    strategy?: 'standard'
-    config?: StandardDispatcherConfig
-  }
+      strategy?: 'standard'
+      config?: StandardDispatcherConfig
+    }
   | {
-    strategy?: 'batching'
-    config?: BatchingDispatchConfig
-  }
+      strategy?: 'batching'
+      config?: BatchingDispatchConfig
+    }
 
 export type CustomerioSettings = {
   apiKey: string
@@ -64,10 +71,11 @@ export function customerio(
   const buffer = analytics.options.disableClientPersistence
     ? new PriorityQueue<Context>(analytics.queue.queue.maxAttempts, [])
     : new PersistedPriorityQueue(
-      analytics.queue.queue.maxAttempts,
-      `dest-Customer.io-Data-Pipelines`
-    )
+        analytics.queue.queue.maxAttempts,
+        `dest-Customer.io-Data-Pipelines`
+      )
 
+  const supersession = deviceSupersession()
   const inflightEvents = new Set<Context>()
   const flushing = false
 
@@ -81,8 +89,29 @@ export function customerio(
       ? batch(remote, deliveryStrategy.config)
       : standard(deliveryStrategy?.config as StandardDispatcherConfig)
 
+  // Device lifecycle calls require a real HTTP acknowledgement, even when
+  // ordinary analytics events use fire-and-forget batching.
+  const deviceClient = standard({ keepalive: true })
+
   async function send(ctx: Context): Promise<Context> {
+    supersession.supersede(ctx, (predicate) => {
+      const analyticsRemoved = analytics.queue.queue.remove(predicate)
+      // Resolve dispatch waiters for events cancelled before core delivery.
+      analyticsRemoved.forEach((item) =>
+        analytics.queue.emit('flush', item, false)
+      )
+      const removed = [
+        ...buffer.remove(predicate),
+        ...analyticsRemoved,
+        ...Array.from(inflightEvents).filter(predicate),
+      ]
+      removed.forEach((item) => inflightEvents.delete(item))
+      return removed
+    })
+    if (supersession.stale(ctx)) return ctx
+    const lifecycle = isDeviceEvent(ctx)
     if (isOffline()) {
+      if (lifecycle) analytics.emit(deviceDeliveryEvent, ctx)
       buffer.push(ctx)
       // eslint-disable-next-line @typescript-eslint/no-use-before-define
       scheduleFlush(flushing, buffer, customerio, scheduleFlush)
@@ -102,13 +131,31 @@ export function customerio(
       json = onAlias(analytics, json)
     }
 
-    return client
+    return (lifecycle ? deviceClient : client)
       .dispatch(
         `${remote}/${path}`,
         normalize(analytics, json, settings, integrations)
       )
-      .then(() => ctx)
+      .then((response) => {
+        if (lifecycle) {
+          const { ok, status } = response as Response
+          const terminalDelete =
+            ctx.event.event === 'Device Deleted' &&
+            status >= 400 &&
+            status < 500 &&
+            status !== 408 &&
+            status !== 429
+          if (!ok && !terminalDelete)
+            throw new Error('Web push device request was not accepted.')
+          if (ok) acceptDevice(ctx)
+          else finalizeDevice(ctx)
+          analytics.emit(deviceDeliveryEvent, ctx)
+        }
+        return ctx
+      })
       .catch(() => {
+        if (supersession.stale(ctx)) return ctx
+        if (lifecycle) analytics.emit(deviceDeliveryEvent, ctx)
         buffer.pushWithBackoff(ctx)
         // eslint-disable-next-line @typescript-eslint/no-use-before-define
         scheduleFlush(flushing, buffer, customerio, scheduleFlush)

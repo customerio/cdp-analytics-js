@@ -1,6 +1,12 @@
 import type { Analytics } from '../../core/analytics'
 import type { Plugin } from '../../core/plugin'
 import { getCDN } from '../../lib/parse-cdn'
+import type { Context } from '../../core/context'
+import {
+  deviceAccepted,
+  deviceDeliveryEvent,
+  deviceFinal,
+} from '../customerio/device-delivery'
 import { deviceAttributes } from './device-attributes'
 
 export interface WebPushSubscriptionJSON {
@@ -54,12 +60,16 @@ export function urlBase64ToUint8Array(value: string): Uint8Array {
   return Uint8Array.from(decoded, (char) => char.charCodeAt(0))
 }
 
+function hasPushSupport(): boolean {
+  return (
+    'serviceWorker' in navigator &&
+    'PushManager' in window &&
+    'Notification' in window
+  )
+}
+
 function supported(): void {
-  if (
-    !('serviceWorker' in navigator) ||
-    !('PushManager' in window) ||
-    !('Notification' in window)
-  ) {
+  if (!hasPushSupport()) {
     throw new Error(
       'Web push requires a supported browser on HTTPS or localhost.'
     )
@@ -109,10 +119,41 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     new URL(workerUrl, location.href).pathname
   }`
   let serviceWorker: ServiceWorkerContainer | undefined
+  type Order = { webpush_event_ms: number; webpush_seq: number }
   type Device = {
     endpoint: string
     userId: string | null
+    registered?: false
+    pendingDelete?: Order & { attempts?: number; nextAttempt?: number }
+    pendingCreate?: Order
     attributesFingerprint?: string
+  }
+  // Keep counters after logout/unsubscribe and across worker path changes.
+  const orders = new Map<string, number>()
+  const nextOrder = async (endpoint: string): Promise<Order> => {
+    const increment = (): Order => {
+      const key = `cio-webpush:seq:${endpoint}`
+      let seq = orders.get(endpoint) ?? 0
+      try {
+        const persisted = Number(localStorage.getItem(key))
+        if (Number.isSafeInteger(persisted) && persisted > seq) seq = persisted
+      } catch {
+        /* Persistence is optional in private browsing. */
+      }
+      seq = Math.max(seq + 1, Date.now())
+      orders.set(endpoint, seq)
+      try {
+        localStorage.setItem(key, String(seq))
+      } catch {
+        /* Persistence is optional in private browsing. */
+      }
+      return { webpush_event_ms: Date.now(), webpush_seq: seq }
+    }
+    // Serialize the read/increment/write across tabs where Web Locks exists.
+    // Older/private browsers retain the in-memory/localStorage fallback.
+    return navigator.locks
+      ? navigator.locks.request(`cio-webpush:${endpoint}`, increment)
+      : increment()
   }
   // Without a delivery-owner marker, an identity transition makes an in-flight
   // handoff ambiguous. Fail closed for the rest of this plugin instance.
@@ -155,13 +196,17 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     if (handoffOwner && handoffOwner !== analytics.user().id())
       identityChanged = true
     if (analytics.user().id()) {
+      const waiting = pending.size > 0
       pending.forEach((finish) => finish())
-      const previous = stored()
-      if (previous && previous.userId !== analytics.user().id())
-        background(reconcile())
+      // Pending subscribe calls already register after identity resolves.
+      // Otherwise inspect the browser even without a local registration record.
+      if (!waiting) background(reconcile())
     }
   }
-  const pagehide = () =>
+  const pagehide = (event?: PageTransitionEvent) => {
+    // A bfcache freeze is not the end of this page's lifetime. Retain the live
+    // subscription and identity waiters so subscribe still resolves on return.
+    if (event?.persisted) return
     pending.forEach((finish) =>
       finish(
         new Error(
@@ -169,6 +214,10 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         )
       )
     )
+  }
+  const pageshow = (event: PageTransitionEvent) => {
+    if (event.persisted && analytics.user().id()) identified()
+  }
   const identity = (): Promise<void> => {
     if (analytics.user().id()) return Promise.resolve()
     return new Promise((resolve, reject) => {
@@ -193,17 +242,100 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   }
   const live = async () =>
     (await registration())?.pushManager.getSubscription() ?? null
-  const device = (token: string, userId?: string) => ({
-    ...(userId ? { userId } : {}),
-    context: { device: { token, type: 'web' } },
+  const device = (token: string, userId: string, order: Order) => ({
+    userId,
+    timestamp: new Date(order.webpush_event_ms),
+    context: { device: { token, type: 'web', ...order } },
   })
+  const deleteHorizon = 7 * 24 * 60 * 60 * 1000
+  const maxDeleteAttempts = 20
+  let deleteTimer: number | undefined
+  let unloaded = false
+  const retryDelete = (nextAttempt: number) => {
+    window.clearTimeout(deleteTimer)
+    if (!unloaded)
+      deleteTimer = window.setTimeout(
+        () => background(reconcile()),
+        Math.max(0, nextAttempt - Date.now())
+      )
+  }
+  // Destination retries reuse the original Context, rather than track()'s
+  // initial result. Observe their outcome too, including after a queue reload.
+  const delivered = (ctx: Context) => {
+    if (ctx.event.event !== 'Device Deleted') return
+    const previous = stored()
+    const order = previous?.pendingDelete
+    const eventDevice = ctx.event.context?.device
+    if (
+      !previous ||
+      !order ||
+      previous.userId !== ctx.event.userId ||
+      previous.endpoint !== eventDevice?.token ||
+      order.webpush_seq !== eventDevice?.webpush_seq ||
+      order.webpush_event_ms !== eventDevice?.webpush_event_ms
+    )
+      return
+    const attempts = (order.attempts ?? 0) + 1
+    if (
+      deviceAccepted(ctx) ||
+      deviceFinal(ctx) ||
+      attempts >= maxDeleteAttempts ||
+      Date.now() - order.webpush_event_ms >= deleteHorizon
+    ) {
+      window.clearTimeout(deleteTimer)
+      save({ endpoint: previous.endpoint, userId: null })
+      if (!unloaded) background(reconcile())
+    } else {
+      const nextAttempt = Math.min(
+        Date.now() + Math.min(3600000, 30000 * 2 ** (attempts - 1)),
+        order.webpush_event_ms + deleteHorizon
+      )
+      save({
+        ...previous,
+        pendingDelete: { ...order, attempts, nextAttempt },
+      })
+      retryDelete(nextAttempt)
+    }
+  }
   const deleteDevice = async (previous: Device) => {
-    if (previous.userId)
-      await analytics.track(
+    if (previous.userId) {
+      // Write before sending. An unacknowledged logout must survive page close,
+      // including reloads without an identity or live browser subscription.
+      const order =
+        previous.pendingDelete ?? (await nextOrder(previous.endpoint))
+      if (
+        Date.now() - order.webpush_event_ms >= deleteHorizon ||
+        (previous.pendingDelete?.attempts ?? 0) >= maxDeleteAttempts
+      ) {
+        save({ endpoint: previous.endpoint, userId: null })
+        return
+      }
+      const nextAttempt = previous.pendingDelete?.nextAttempt ?? 0
+      if (nextAttempt > Date.now()) {
+        retryDelete(nextAttempt)
+        throw new Error(
+          'Web push device deletion is waiting for retry backoff.'
+        )
+      }
+      // Persist a lease before sending so a reload cannot duplicate this attempt.
+      save({
+        ...previous,
+        pendingDelete: {
+          ...order,
+          nextAttempt: Date.now() + 30000,
+        },
+      })
+      // Also retry when Analytics short-circuits an offline event before it
+      // reaches the destination (retryQueue may be disabled).
+      retryDelete(Date.now() + 30000)
+      const result = await analytics.track(
         'Device Deleted',
         {},
         {
-          ...device(previous.endpoint, previous.userId),
+          ...device(previous.endpoint, previous.userId, {
+            webpush_seq: order.webpush_seq,
+            webpush_event_ms: order.webpush_event_ms,
+          }),
           // Journeys deletes by the stored owner's userId alone. Explicit null
           // keeps the current visitor's anonymous ID off the previous owner's
           // event (undefined would be filled during normalization), and a string
@@ -211,6 +343,19 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           anonymousId: null,
         }
       )
+      const current = stored()
+      if (
+        current?.pendingDelete?.webpush_seq === order.webpush_seq &&
+        (current.pendingDelete.attempts ?? 0) ===
+          (previous.pendingDelete?.attempts ?? 0)
+      )
+        delivered(result)
+      if (!deviceAccepted(result) && !deviceFinal(result))
+        throw new Error(
+          'Web push device deletion was not accepted; retry cleanup.'
+        )
+      window.clearTimeout(deleteTimer)
+    }
   }
   const reset = () => {
     identityChanged = true
@@ -232,7 +377,10 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         ? subscription.expirationTime
         : null,
   })
-  const registerDevice = async (subscription: PushSubscription) => {
+  const registerDevice = async (
+    subscription: PushSubscription,
+    force = true
+  ) => {
     const value = json(subscription)
     const metadata = attributes(subscription)
     await identity()
@@ -241,9 +389,22 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       const userId = analytics.user().id()
       if (!userId) throw new Error('Web push requires an identified user.')
       const previous = stored()
+      // Delivery feedback and identify can reconcile concurrently. Recheck
+      // inside the mutation queue so they do not enqueue duplicate Creates.
+      if (
+        !force &&
+        previous?.endpoint === value.endpoint &&
+        previous.userId === userId &&
+        previous.registered !== false &&
+        !previous.pendingDelete &&
+        previous.attributesFingerprint === JSON.stringify(metadata)
+      )
+        return value
       if (
         previous &&
-        (previous.endpoint !== value.endpoint || previous.userId !== userId)
+        (previous.pendingDelete ||
+          previous.endpoint !== value.endpoint ||
+          previous.userId !== userId)
       ) {
         // A path change may have switched storage keys. Persist the owner at
         // the current path before deletion so a failed request survives reload.
@@ -251,7 +412,23 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         await deleteDevice(previous)
         save({ endpoint: previous.endpoint, userId: null })
       }
-      await analytics.track(
+      // Retain the owner for deletion, but never treat a queued/failed attempt
+      // as a registration. Reload, identify and pageshow can retry it.
+      const current = stored()
+      const order =
+        current?.endpoint === value.endpoint &&
+        current.userId === userId &&
+        !current.pendingDelete &&
+        current.pendingCreate
+          ? current.pendingCreate
+          : await nextOrder(value.endpoint)
+      save({
+        endpoint: value.endpoint,
+        userId,
+        registered: false,
+        pendingCreate: order,
+      })
+      const result = await analytics.track(
         'Device Created or Updated',
         {
           webpush_p256dh: value.keys.p256dh,
@@ -259,8 +436,12 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           user_agent: navigator.userAgent,
           ...metadata,
         },
-        device(value.endpoint, userId)
+        device(value.endpoint, userId, order)
       )
+      if (!deviceAccepted(result))
+        throw new Error(
+          'Web push device registration was not accepted; retry subscribe.'
+        )
       if (handoffOwner === undefined) handoffOwner = userId
       save({
         endpoint: value.endpoint,
@@ -271,17 +452,31 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     })
   }
   const reconcile = async (force = false) => {
+    if (!hasPushSupport()) return
     const subscription = await live()
+    // reset's deletion may still be settling when identify fires. Inspect the
+    // record only after earlier mutations have cleared the previous owner.
+    await mutations
+    if (stored()?.pendingDelete) {
+      await mutate(async () => {
+        const previous = stored()
+        if (!previous?.pendingDelete) return
+        await deleteDevice(previous)
+        save({ endpoint: previous.endpoint, userId: null })
+      })
+    }
     const previous = stored()
     if (
+      analytics.user().id() &&
       subscription &&
       (force ||
         previous?.endpoint !== subscription.endpoint ||
         previous?.userId !== analytics.user().id() ||
+        previous?.registered === false ||
         previous?.attributesFingerprint !==
           JSON.stringify(attributes(subscription)))
     )
-      await registerDevice(subscription)
+      await registerDevice(subscription, force)
   }
   const background = (task: Promise<unknown>) => {
     void task.catch((error: unknown) =>
@@ -494,7 +689,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         if (!endpoint) return
         const owner = previous?.userId ?? analytics.user().id() ?? null
         // No known owner means no device event was registered to delete.
-        const record = { endpoint, userId: owner }
+        const record = { ...previous, endpoint, userId: owner }
         save(record)
         await deleteDevice(record)
         save(null)
@@ -517,6 +712,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     load: (_ctx, instance) => {
       if (settings.enabled === false) return Promise.resolve()
       analytics = instance
+      unloaded = false
       try {
         serviceWorker = navigator.serviceWorker
       } catch {
@@ -533,22 +729,27 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       analytics.webPush = api
       analytics.on('identify', identified)
       analytics.on('reset', reset)
+      analytics.on(deviceDeliveryEvent, delivered)
       window.addEventListener('pagehide', pagehide)
+      window.addEventListener('pageshow', pageshow)
       if (serviceWorker) {
         serviceWorker.addEventListener('message', message)
         serviceWorker.addEventListener('controllerchange', controllerchange)
         controllerchange()
         // Only inspect an existing subscription; loading never registers or prompts.
-        if ('PushManager' in window && 'Notification' in window)
-          background(reconcile())
+        if (hasPushSupport()) background(reconcile())
       }
       return Promise.resolve()
     },
     unload: () => {
+      unloaded = true
+      window.clearTimeout(deleteTimer)
       pagehide()
+      analytics?.off(deviceDeliveryEvent, delivered)
       analytics?.off('identify', identified)
       analytics?.off('reset', reset)
       window.removeEventListener('pagehide', pagehide)
+      window.removeEventListener('pageshow', pageshow)
       serviceWorker?.removeEventListener('message', message)
       serviceWorker?.removeEventListener('controllerchange', controllerchange)
       clickListeners.clear()

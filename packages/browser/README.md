@@ -88,6 +88,16 @@ Device ownership is persisted per worker path: reset deletes the device of the
 person stored for the current path, and identifying another person registers it
 for them. Unsubscribe turns off the browser subscription even when logged out;
 deletion uses the stored owner when known.
+Unacknowledged logout deletes persist with their original event time/order and
+retry with backoff (30 seconds to one hour), including after reload. Reloads
+within backoff do not enqueue duplicate deletes. Cleanup stops on final HTTP 4xx
+(except 408/429), after 20 failed attempts, or after seven days, so it cannot
+permanently block registration. A buffered delete's acknowledgement or final
+rejection automatically reconciles the current identified user without reload.
+Device sequences use `max(previous + 1, Date.now())` (64-bit epoch-ms scale) and
+persist across logout. Web Locks serialize sequence allocation across tabs when
+available; without locks, allocation remains best effort. After storage loss,
+the wall-clock floor assumes the clock has advanced beyond the prior sequence.
 Per-call worker URLs are persisted so later loads can find the subscription, as
 long as the `serviceWorkerUrl` load option still names the original path. Where
 `localStorage` is unavailable (for example, some private browsing modes), owners
