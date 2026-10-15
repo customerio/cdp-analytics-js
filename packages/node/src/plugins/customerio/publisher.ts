@@ -14,8 +14,8 @@ function sleep(timeoutInMs: number): Promise<void> {
 
 function noop() { }
 
-// New prefixed API keys: {ak|wk}_{us|eu}_..., where us/eu is the data center.
-const PREFIXED_KEY_REGEX = /^(ak|wk)_(us|eu)_/
+// Prefixed API keys: {type}_{us|eu}_..., where us/eu is the data center.
+const PREFIXED_KEY_REGEX = /^[a-z]{2}_(us|eu)_/
 
 interface PendingItem {
   resolver: (ctx: Context) => void
@@ -68,7 +68,7 @@ export class Publisher {
       ? `Bearer ${writeKey}`
       : `Basic ${b64encode(`${writeKey}:`)}`
     const defaultHost =
-      prefixedKey?.[2] === 'eu'
+      prefixedKey?.[1] === 'eu'
         ? 'https://cdp-eu.customer.io'
         : 'https://cdp.customer.io'
     this._url = tryCreateFormattedUrl(host ?? defaultHost, path ?? '/v1/batch')

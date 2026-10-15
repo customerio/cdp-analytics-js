@@ -677,16 +677,16 @@ describe('CustomerioNodePlugin', () => {
       return { url, authorization: request.headers.Authorization }
     }
 
-    it('sends ak_ keys as a Bearer token', async () => {
-      const writeKey = 'ak_us_abc_def'
+    it('sends sk_ keys as a Bearer token', async () => {
+      const writeKey = 'sk_us_abc_def'
       expect(await sendTrack({ writeKey })).toEqual({
         url: 'https://cdp.customer.io/v1/batch',
         authorization: `Bearer ${writeKey}`,
       })
     })
 
-    it('sends wk_ keys as a Bearer token', async () => {
-      const writeKey = 'wk_us_abc_def'
+    it('sends pk_ keys as a Bearer token', async () => {
+      const writeKey = 'pk_us_abc_def'
       expect(await sendTrack({ writeKey })).toEqual({
         url: 'https://cdp.customer.io/v1/batch',
         authorization: `Bearer ${writeKey}`,
@@ -700,22 +700,22 @@ describe('CustomerioNodePlugin', () => {
       })
     })
 
-    it('uses the EU host for ak_eu_ keys when no host is set', async () => {
-      expect(await sendTrack({ writeKey: 'ak_eu_abc_def' })).toEqual({
+    it('uses the EU host for sk_eu_ keys when no host is set', async () => {
+      expect(await sendTrack({ writeKey: 'sk_eu_abc_def' })).toEqual({
         url: 'https://cdp-eu.customer.io/v1/batch',
-        authorization: 'Bearer ak_eu_abc_def',
+        authorization: 'Bearer sk_eu_abc_def',
       })
     })
 
     it('uses an explicitly set host over the key data center', async () => {
       expect(
         await sendTrack({
-          writeKey: 'ak_eu_abc_def',
+          writeKey: 'sk_eu_abc_def',
           host: 'https://cdp.customer.io',
         })
       ).toEqual({
         url: 'https://cdp.customer.io/v1/batch',
-        authorization: 'Bearer ak_eu_abc_def',
+        authorization: 'Bearer sk_eu_abc_def',
       })
     })
   })
