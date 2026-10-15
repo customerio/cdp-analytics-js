@@ -659,4 +659,64 @@ describe('CustomerioNodePlugin', () => {
       assertHttpRequestEmittedEvent(fn.mock.lastCall[0])
     })
   })
+
+  describe('prefixed API keys', () => {
+    const sendTrack = async (props: Partial<PublisherProps>) => {
+      const { plugin: customerioPlugin } = createTestNodePlugin({
+        maxRetries: 3,
+        maxEventsInBatch: 1,
+        flushInterval: 1000,
+        writeKey: '',
+        ...props,
+      })
+      fetcher.mockReturnValueOnce(createSuccess())
+      await customerioPlugin.track(
+        new Context(eventFactory.track('foo', undefined, { userId: 'foo' }))
+      )
+      const [url, request] = fetcher.mock.lastCall
+      return { url, authorization: request.headers.Authorization }
+    }
+
+    it('sends sk_ keys as a Bearer token', async () => {
+      const writeKey = 'sk_us_abc_def'
+      expect(await sendTrack({ writeKey })).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: `Bearer ${writeKey}`,
+      })
+    })
+
+    it('sends pk_ keys as a Bearer token', async () => {
+      const writeKey = 'pk_us_abc_def'
+      expect(await sendTrack({ writeKey })).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: `Bearer ${writeKey}`,
+      })
+    })
+
+    it('sends legacy keys with Basic auth', async () => {
+      expect(await sendTrack({ writeKey: 'legacy-write-key' })).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: 'Basic bGVnYWN5LXdyaXRlLWtleTo=',
+      })
+    })
+
+    it('uses the EU host for sk_eu_ keys when no host is set', async () => {
+      expect(await sendTrack({ writeKey: 'sk_eu_abc_def' })).toEqual({
+        url: 'https://cdp-eu.customer.io/v1/batch',
+        authorization: 'Bearer sk_eu_abc_def',
+      })
+    })
+
+    it('uses an explicitly set host over the key data center', async () => {
+      expect(
+        await sendTrack({
+          writeKey: 'sk_eu_abc_def',
+          host: 'https://cdp.customer.io',
+        })
+      ).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: 'Bearer sk_eu_abc_def',
+      })
+    })
+  })
 })
