@@ -1,79 +1,15 @@
-import fs from 'fs'
-import path from 'path'
-import vm from 'vm'
+/** @jest-environment node */
+import { createWorker, worker } from './worker-harness'
 
 beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(1700000000000))
 afterEach(() => jest.restoreAllMocks())
 
-// The build ships this file unchanged as dist/cio-webpush-sw.js and fails if
-// the emitted copy differs (webpack.config.js), so the source is what's tested.
-const worker = path.join(__dirname, '../cio-webpush-sw.js')
-
-function createWorker(
-  worker: string,
-  workerUrl = 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io',
-  globals: Record<string, unknown> = {}
-) {
-  const listeners: Record<string, (event: any) => void> = {}
-  const fetch = jest.fn().mockResolvedValue({ ok: true })
-  const showNotification = jest.fn().mockResolvedValue(undefined)
-  const openWindow = jest.fn().mockResolvedValue(undefined)
-  const postMessage = jest.fn()
-  const pushManager = {
-    getSubscription: jest.fn().mockResolvedValue({ endpoint: 'endpoint' }),
-    subscribe: jest.fn().mockResolvedValue({}),
-  }
-  const skipWaiting = jest.fn().mockResolvedValue(undefined)
-  const claim = jest.fn().mockResolvedValue(undefined)
-  const self = {
-    ...globals,
-    skipWaiting,
-    location: {
-      href: workerUrl,
-      origin: new URL(workerUrl).origin,
-    },
-    addEventListener: (name: string, fn: (event: any) => void) => {
-      listeners[name] = fn
-    },
-    registration: { showNotification, pushManager },
-    clients: {
-      claim,
-      openWindow,
-      matchAll: jest.fn().mockResolvedValue([{ postMessage }]),
-    },
-  }
-  vm.runInNewContext(fs.readFileSync(worker, 'utf8'), {
-    self,
-    fetch,
-    URL,
-    Date,
-    setTimeout,
-    clearTimeout,
-    AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
-    console: { warn: jest.fn() },
+// Fake only the worker's readiness timer: Node 19+ makes performance read-only,
+// and the metric outbox's fake IndexedDB needs real immediates to settle.
+const useClickTimers = () =>
+  jest.useFakeTimers({
+    doNotFake: ['performance', 'setImmediate', 'nextTick', 'queueMicrotask'],
   })
-  const invoke = (name: string, event: any) => {
-    let task: Promise<unknown> = Promise.resolve()
-    listeners[name]?.({
-      ...event,
-      waitUntil: (promise: Promise<unknown>) => {
-        task = promise
-      },
-    })
-    return task
-  }
-  return {
-    invoke,
-    skipWaiting,
-    claim,
-    fetch,
-    showNotification,
-    openWindow,
-    postMessage,
-    pushManager,
-    clients: self.clients,
-  }
-}
 
 describe('cio-webpush-sw.js', () => {
   const setup = () => createWorker(worker)
@@ -147,9 +83,16 @@ describe('cio-webpush-sw.js', () => {
     'badge support and failures do not block delivery: %j',
     async (navigator) => {
       const s = createWorker(worker, undefined, { navigator })
+      // Distinct deliveries: the durable outbox reports each delivery once.
       for (const count of [0, 3]) {
         await s.invoke('push', {
-          data: { json: () => ({ ...relayMarkers, app_badge: count }) },
+          data: {
+            json: () => ({
+              ...relayMarkers,
+              'CIO-Delivery-ID': `delivery-${count}`,
+              app_badge: count,
+            }),
+          },
         })
       }
       expect(s.showNotification).toHaveBeenCalledTimes(2)
@@ -289,7 +232,7 @@ describe('cio-webpush-sw.js', () => {
   })
 
   test('redirected and router-navigated clients receive clicks by id once', async () => {
-    jest.useFakeTimers()
+    useClickTimers()
     try {
       const s = setup()
       const page = {
@@ -330,7 +273,7 @@ describe('cio-webpush-sw.js', () => {
   })
 
   test('readiness times out without delivering a late click', async () => {
-    jest.useFakeTimers()
+    useClickTimers()
     try {
       const s = setup()
       const page = { id: 'page', postMessage: jest.fn() }
