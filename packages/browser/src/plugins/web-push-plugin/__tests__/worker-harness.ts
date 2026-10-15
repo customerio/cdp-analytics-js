@@ -60,12 +60,17 @@ export function createWorker(
     indexedDB,
     URL,
     Date,
+    setTimeout,
+    clearTimeout,
     AbortSignal: { timeout: jest.fn(() => 'timeout-signal') },
     console: { warn },
     ...runtime,
   })
   // Model a host worker with names that would collide without the IIFE.
-  vm.runInContext('let retryMetrics, metricTasks, trackUrl, metric;', context)
+  vm.runInContext(
+    'let retryMetrics, metricTasks, trackUrl, metric, pendingClicks, handoff;',
+    context
+  )
   const startup: Promise<unknown> = vm.runInContext(
     fs.readFileSync(worker, 'utf8'),
     context
@@ -89,6 +94,7 @@ export function createWorker(
     openWindow,
     postMessage,
     pushManager,
+    clients: self.clients,
     indexedDB,
     sync,
     startup,

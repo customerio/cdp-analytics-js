@@ -2,6 +2,7 @@ import { Analytics } from '../../../core/analytics'
 import { Context } from '../../../core/context'
 import { WebPushPlugin } from '..'
 import { acceptDevice } from '../../customerio/device-delivery'
+import { deviceAttributes } from '../device-attributes'
 
 const key = btoa(String.fromCharCode(4) + 'a'.repeat(64))
 const value = {
@@ -13,6 +14,7 @@ function setup(userId: string | null = 'person') {
   let id = userId
   const listeners: Record<string, (...args: any[]) => void> = {}
   const subscription = {
+    expirationTime: null as number | null,
     endpoint: value.endpoint,
     toJSON: () => value,
     unsubscribe: jest.fn().mockResolvedValue(true),
@@ -65,8 +67,8 @@ function setup(userId: string | null = 'person') {
   } as unknown as Analytics
   const plugin = WebPushPlugin({ vapidPublicKey: key })
   const load = () => plugin.load(Context.system(), analytics)
-  const identify = () => {
-    id = 'person'
+  const identify = (nextId = 'person') => {
+    id = nextId
     listeners.identify()
   }
   const reset = () => {
@@ -150,7 +152,11 @@ test.each(['identify', 'pageshow', 'reload', 'subscribe'])(
       )
     else await s.analytics.webPush!.subscribe()
     await settle()
-    expect(record()).toEqual({ endpoint: value.endpoint, userId: 'person' })
+    expect(record()).toEqual({
+      endpoint: value.endpoint,
+      userId: 'person',
+      attributesFingerprint: expect.any(String),
+    })
     expect(s.analytics.track).toHaveBeenCalledTimes(2)
     const calls = jest.mocked(s.analytics.track).mock.calls
     expect(calls[1][2]).toEqual(calls[0][2])
@@ -203,6 +209,345 @@ test('device events carry original wall-clock time without future-dating same-se
   expect((options as any).context.device.webpush_seq).toBe(1700000002000)
   now.mockRestore()
   await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each([null, 1800000000123, 0])(
+  'all device registration paths include parsed attributes and expiry %j',
+  async (expirationTime) => {
+    const s = setup()
+    s.subscription.expirationTime = expirationTime
+    const ua = jest
+      .spyOn(navigator, 'userAgent', 'get')
+      .mockReturnValue(
+        'Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0'
+      )
+    try {
+      // Initial subscribe, explicit update, reload reconciliation and
+      // subscription-change all use the same device registration path.
+      await s.load()
+      await s.analytics.webPush!.subscribe()
+      await s.analytics.webPush!.subscribe()
+      s.manager.getSubscription.mockResolvedValue(s.subscription)
+      s.sw.addEventListener.mock.calls[0][1]({
+        data: { type: 'cio-webpush-subscriptionchange' },
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const properties = jest
+        .mocked(s.analytics.track)
+        .mock.calls.filter(([event]) => event === 'Device Created or Updated')
+        .map(([, props]) => props)
+      expect(properties).toHaveLength(3)
+      for (const props of properties) {
+        expect(props).toEqual({
+          webpush_p256dh: value.keys.p256dh,
+          webpush_auth: value.keys.auth,
+          user_agent: navigator.userAgent,
+          browser: 'Firefox',
+          browser_version: '157',
+          os: 'Linux',
+          webpush_expiration_time: expirationTime,
+        })
+      }
+      await s.plugin.unload?.(Context.system(), s.analytics)
+      // A fresh plugin reload with no stored owner registers the same metadata.
+      localStorage.clear()
+      const reloaded = setup()
+      reloaded.subscription.expirationTime = expirationTime
+      reloaded.manager.getSubscription.mockResolvedValue(reloaded.subscription)
+      await reloaded.load()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(jest.mocked(reloaded.analytics.track).mock.calls[0][1]).toEqual(
+        properties[0]
+      )
+      await reloaded.plugin.unload?.(Context.system(), reloaded.analytics)
+    } finally {
+      ua.mockRestore()
+    }
+  }
+)
+
+test('registration prefers navigator.userAgentData without requesting high-entropy hints', async () => {
+  const s = setup()
+  Object.defineProperty(navigator, 'userAgentData', {
+    configurable: true,
+    value: {
+      brands: [{ brand: 'Microsoft Edge', version: '154' }],
+      platform: 'Windows',
+    },
+  })
+  try {
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(jest.mocked(s.analytics.track).mock.calls[0][1]).toMatchObject({
+      browser: 'Edge',
+      browser_version: '154',
+      os: 'Windows',
+    })
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  } finally {
+    Reflect.deleteProperty(navigator, 'userAgentData')
+  }
+})
+
+test('click messages dispatch typed CustomEvents and removable onClick callbacks', async () => {
+  const s = setup()
+  await s.load()
+  const listener = s.sw.addEventListener.mock.calls.find(
+    ([name]) => name === 'message'
+  )![1]
+  const callback = jest.fn()
+  const other = jest.fn()
+  const eventListener = jest.fn()
+  window.addEventListener('cio:webpush:click', eventListener)
+  const remove = s.analytics.webPush!.onClick(callback)
+  s.analytics.webPush!.onClick(other)
+  const detail = {
+    type: 'cio-webpush-click',
+    deliveryId: 'delivery',
+    action: 'view',
+    customData: { orderId: '123', nested: { items: [1, 2] } },
+  }
+  listener({ data: detail })
+  const { type: _type, ...publicDetail } = detail
+  expect(callback).toHaveBeenCalledWith(publicDetail)
+  expect(other).toHaveBeenCalledWith(publicDetail)
+  expect(eventListener.mock.calls[0][0].detail).toEqual(publicDetail)
+  remove()
+  listener({ data: { ...detail, action: '', customData: undefined } })
+  expect(callback).toHaveBeenCalledTimes(1)
+  expect(other).toHaveBeenLastCalledWith({
+    ...publicDetail,
+    action: '',
+    customData: undefined,
+  })
+  await s.plugin.unload?.(Context.system(), s.analytics)
+  expect(s.sw.removeEventListener).toHaveBeenCalledWith('message', listener)
+  listener({ data: detail })
+  expect(other).toHaveBeenCalledTimes(2)
+  window.removeEventListener('cio:webpush:click', eventListener)
+})
+
+test('a failing click callback does not prevent other callbacks', async () => {
+  const s = setup()
+  await s.load()
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+  const callback = jest.fn()
+  s.analytics.webPush!.onClick(() => {
+    throw new Error('app callback')
+  })
+  s.analytics.webPush!.onClick(callback)
+  const listener = s.sw.addEventListener.mock.calls[0][1]
+  listener({
+    data: { type: 'cio-webpush-click', deliveryId: 'delivery', action: '' },
+  })
+  expect(callback).toHaveBeenCalledTimes(1)
+  warn.mockRestore()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('plugin announces readiness on load, controller changes, and worker probes', async () => {
+  const s = setup()
+  const controller = { postMessage: jest.fn() }
+  Object.assign(s.sw, { controller })
+  await s.load()
+  expect(controller.postMessage).toHaveBeenCalledWith({
+    type: 'cio-webpush-ready',
+  })
+  const changed = s.sw.addEventListener.mock.calls.find(
+    ([name]) => name === 'controllerchange'
+  )![1]
+  changed()
+  expect(controller.postMessage).toHaveBeenCalledTimes(2)
+  const source = { postMessage: jest.fn() }
+  const listener = s.sw.addEventListener.mock.calls[0][1]
+  listener({ data: { type: 'cio-webpush-check-ready' }, source })
+  expect(source.postMessage).toHaveBeenCalledWith({ type: 'cio-webpush-ready' })
+  await s.plugin.unload?.(Context.system(), s.analytics)
+  expect(s.sw.removeEventListener).toHaveBeenCalledWith(
+    'controllerchange',
+    changed
+  )
+})
+
+test('received messages dispatch to window without invoking click callbacks', async () => {
+  const s = setup()
+  await s.load()
+  const callback = jest.fn()
+  s.analytics.webPush!.onClick(callback)
+  const eventListener = jest.fn()
+  window.addEventListener('cio:webpush:received', eventListener)
+  const detail = {
+    type: 'cio-webpush-received',
+    deliveryId: 'delivery',
+    title: 'Order ready',
+    customData: { orderId: '123' },
+    privateField: 'not public',
+  }
+  s.sw.addEventListener.mock.calls[0][1]({ data: detail })
+  expect(eventListener.mock.calls[0][0].detail).toEqual({
+    deliveryId: 'delivery',
+    title: 'Order ready',
+    customData: { orderId: '123' },
+  })
+  expect(callback).not.toHaveBeenCalled()
+  window.removeEventListener('cio:webpush:received', eventListener)
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each([
+  null,
+  {},
+  { type: 'unknown' },
+  { type: 'cio-webpush-click', deliveryId: 1, action: '' },
+  { type: 'cio-webpush-click', deliveryId: 'delivery' },
+])('ignores unrelated or malformed click messages: %j', async (data) => {
+  const s = setup()
+  await s.load()
+  const callback = jest.fn()
+  s.analytics.webPush!.onClick(callback)
+  s.sw.addEventListener.mock.calls[0][1]({ data })
+  expect(callback).not.toHaveBeenCalled()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each([null, [], 'bad', 123, new Date()])(
+  'malformed custom data %j is omitted without dropping clicks; logs once',
+  async (customData) => {
+    const s = setup()
+    await s.load()
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const callback = jest.fn()
+      s.analytics.webPush!.onClick(callback)
+      const listener = s.sw.addEventListener.mock.calls[0][1]
+      for (let i = 0; i < 2; i++)
+        listener({
+          data: {
+            type: 'cio-webpush-click',
+            deliveryId: 'delivery',
+            action: '',
+            customData,
+          },
+        })
+      expect(callback).toHaveBeenCalledTimes(2)
+      expect(callback).toHaveBeenLastCalledWith({
+        deliveryId: 'delivery',
+        action: '',
+        customData: undefined,
+      })
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+      await s.plugin.unload?.(Context.system(), s.analytics)
+    }
+  }
+)
+
+test('reset suppresses in-flight handoffs even after registering again', async () => {
+  const s = setup()
+  await s.load()
+  await s.analytics.webPush!.subscribe()
+  const callback = jest.fn()
+  s.analytics.webPush!.onClick(callback)
+  s.reset()
+  s.identify()
+  await s.analytics.webPush!.subscribe()
+  const received = jest.fn()
+  window.addEventListener('cio:webpush:received', received)
+  const listener = s.sw.addEventListener.mock.calls[0][1]
+  listener({
+    data: {
+      type: 'cio-webpush-click',
+      deliveryId: 'delivery',
+      action: '',
+      customData: { secret: true },
+    },
+  })
+  listener({
+    data: {
+      type: 'cio-webpush-received',
+      deliveryId: 'delivery',
+      title: 'Secret',
+    },
+  })
+  expect(callback).not.toHaveBeenCalled()
+  expect(received).not.toHaveBeenCalled()
+  window.removeEventListener('cio:webpush:received', received)
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test('switching identified users suppresses the previous registration handoff', async () => {
+  const s = setup()
+  await s.load()
+  await s.analytics.webPush!.subscribe()
+  s.manager.getSubscription.mockResolvedValue(s.subscription)
+  s.identify('another-person')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const callback = jest.fn()
+  s.analytics.webPush!.onClick(callback)
+  s.sw.addEventListener.mock.calls[0][1]({
+    data: {
+      type: 'cio-webpush-click',
+      deliveryId: 'delivery',
+      action: '',
+      customData: { oldUser: true },
+    },
+  })
+  expect(callback).not.toHaveBeenCalled()
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each([
+  'legacy',
+  'unchanged',
+  'browser',
+  'version',
+  'os',
+  'expiry',
+  'clear expiry',
+])('reconciliation updates attribute fingerprint for %s', async (kind) => {
+  const s = setup()
+  const ua = jest
+    .spyOn(navigator, 'userAgent', 'get')
+    .mockReturnValue('Mozilla/5.0 Chrome/155.0 Linux')
+  try {
+    if (kind === 'clear expiry') s.subscription.expirationTime = 100
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    await s.plugin.unload?.(Context.system(), s.analytics)
+    if (kind === 'legacy')
+      localStorage.setItem(
+        'cio-webpush:/cio-webpush-sw.js',
+        JSON.stringify({ endpoint: value.endpoint, userId: 'person' })
+      )
+    if (kind === 'browser')
+      ua.mockReturnValue('Mozilla/5.0 Firefox/155.0 Linux')
+    if (kind === 'version') ua.mockReturnValue('Mozilla/5.0 Chrome/156.0 Linux')
+    if (kind === 'os')
+      ua.mockReturnValue('Mozilla/5.0 Chrome/155.0 Windows NT 10.0')
+    const next = setup()
+    if (kind === 'expiry') next.subscription.expirationTime = 200
+    next.manager.getSubscription.mockResolvedValue(next.subscription)
+    await next.load()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(next.analytics.track).toHaveBeenCalledTimes(
+      kind === 'unchanged' ? 0 : 1
+    )
+    if (kind === 'clear expiry')
+      expect(jest.mocked(next.analytics.track).mock.calls[0][1]).toMatchObject({
+        webpush_expiration_time: null,
+      })
+    await next.plugin.unload?.(Context.system(), next.analytics)
+    const again = setup()
+    again.subscription.expirationTime = next.subscription.expirationTime
+    again.manager.getSubscription.mockResolvedValue(again.subscription)
+    await again.load()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(again.analytics.track).not.toHaveBeenCalled()
+    await again.plugin.unload?.(Context.system(), again.analytics)
+  } finally {
+    ua.mockRestore()
+  }
 })
 
 test('reuses a compatible subscription when the browser does not expose its key', async () => {
@@ -554,6 +899,8 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
       webpush_p256dh: 'p256dh',
       webpush_auth: 'auth',
       user_agent: navigator.userAgent,
+      ...deviceAttributes(navigator),
+      webpush_expiration_time: null,
     },
     {
       timestamp: expect.any(Date),
@@ -669,6 +1016,8 @@ test('returns the live subscription and unsubscribes before tracking deletion', 
   s.manager.getSubscription.mockResolvedValue(s.subscription)
   await s.load()
   expect(await s.analytics.webPush!.subscription()).toEqual(value)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  jest.mocked(s.analytics.track).mockClear()
   await s.analytics.webPush!.unsubscribe()
   expect(s.subscription.unsubscribe).toHaveBeenCalled()
   expect(s.analytics.track).toHaveBeenCalledWith(
@@ -702,6 +1051,7 @@ test('keeps the deleted endpoint for retry when tracking fails', async () => {
   )
   s.manager.getSubscription.mockResolvedValue(s.subscription)
   await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
   ;(s.analytics.track as jest.Mock).mockRejectedValueOnce(new Error('offline'))
   await expect(s.analytics.webPush!.unsubscribe()).rejects.toThrow('offline')
   expect(

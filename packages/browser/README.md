@@ -28,14 +28,21 @@ loaded by default. Loading does not register a service worker or request permiss
 It only checks for an existing subscription to reconcile a changed endpoint.
 
 ```ts
-import { AnalyticsBrowser, WebPushPlugin } from '@customerio/cdp-analytics-browser'
+import {
+  AnalyticsBrowser,
+  WebPushPlugin,
+} from '@customerio/cdp-analytics-browser'
 
-const [analytics] = await AnalyticsBrowser.load({ writeKey: '<YOUR_WRITE_KEY>' })
-await analytics.register(WebPushPlugin({
-  vapidPublicKey: '<YOUR_PUBLIC_VAPID_KEY>',
-  serviceWorkerUrl: '/cio-webpush-sw.js',
-  trackUrl: 'https://track.customer.io',
-}))
+const [analytics] = await AnalyticsBrowser.load({
+  writeKey: '<YOUR_WRITE_KEY>',
+})
+await analytics.register(
+  WebPushPlugin({
+    vapidPublicKey: '<YOUR_PUBLIC_VAPID_KEY>',
+    serviceWorkerUrl: '/cio-webpush-sw.js',
+    trackUrl: 'https://track.customer.io',
+  })
+)
 await analytics.identify('your-user-id')
 
 // Invoke directly from a user gesture, especially on Safari/iOS.
@@ -69,6 +76,7 @@ analytics.webPush!.requestPermission() // Promise<NotificationPermission>
 analytics.webPush!.subscribe({ vapidPublicKey, serviceWorkerUrl }) // optional overrides
 analytics.webPush!.subscription() // Promise<WebPushSubscriptionJSON | null>
 analytics.webPush!.unsubscribe() // Promise<void>
+analytics.webPush!.onClick((event) => console.log(event.customData)) // returns a cleanup function
 ```
 
 Identify first. An anonymous subscribe can obtain browser permission and create a
@@ -127,7 +135,10 @@ allowed for development), without a redirect. A root worker has root scope. To u
 scope is `/notifications/`. Do not overwrite another application's service worker:
 use a dedicated scope or integrate the handlers into your existing worker and
 pass that worker's URL. Subscribe rejects a different worker at the same default
-scope before registering or replacing it. The ordinary notification permission
+scope before registering or replacing it. The plugin registers its worker as a
+classic script, so if your existing worker is a module service worker
+(`type: 'module'`), leave it as it is and serve `cio-webpush-sw.js` in a dedicated
+scope instead. The ordinary notification permission
 request still happens from your user action.
 
 The worker reads the metrics endpoint from its `?track=` query. When integrating
@@ -163,6 +174,33 @@ a user action. Unsupported browsers or denied permission reject `subscribe`.
 Changing VAPID keys invalidates existing subscriptions. Calling `subscribe` with
 the new key unsubscribes and deletes the old device before registering the new one.
 
+### Device attributes
+
+Every `Device Created or Updated` registration (subscribe, updates, and endpoint
+reconciliation) sends these device attributes alongside `webpush_p256dh` and
+`webpush_auth`:
+
+| Attribute                 | Value                                                                                                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user_agent`              | Original `navigator.userAgent` (unchanged)                                                                                                                           |
+| `webpush_expiration_time` | `PushSubscription.expirationTime` as an integer epoch millisecond timestamp; sent as null to clear stale expiry when unknown (common on Chrome, Firefox, and Safari) |
+| `browser`                 | `Chrome`, `Edge`, `Firefox`, `Safari`, `Opera`, `Samsung Internet`, or `Other`                                                                                       |
+| `browser_version`         | Major version only, as a string (for example, `'154'`); omitted when unknown                                                                                         |
+| `os`                      | `macOS`, `Windows`, `iOS`, `iPadOS`, `Android`, `Linux`, `ChromeOS`, or `Other`                                                                                      |
+
+These finite browser/OS values support segments without parsing UA strings.
+The tiny built-in parser prefers `navigator.userAgentData` brands and platform
+when available, then falls back to UA tokens. It uses no high-entropy hints or
+third-party parser. Chromium is grouped under Chrome; specific Edge, Opera, and
+Samsung tokens take precedence over generic Chrome tokens. Desktop-mode iPadOS
+is detected using a Macintosh UA plus touch points. iOS Home Screen apps may
+omit a browser version: the worker's WebKit engine version is not a Safari major.
+Unknown expiry means **unknown**, not an expired subscription. The plugin sends
+null to clear a previously stored expiry. A persisted fingerprint of browser,
+major version, OS, and expiry triggers re-registration on changes (including
+backfilling devices registered by older SDKs on their next page load). Unchanged
+attributes do not trigger another registration.
+
 ### Notification payload
 
 The worker accepts `title`, `body`, optional `image` (large picture), `icon`,
@@ -197,7 +235,32 @@ it saves and sends a message.
 The worker drops malformed actions and keeps at most two valid entries. The
 browser decides how many buttons it shows: Chrome supports two; Firefox may show
 none. Image, icon, and badge rendering also depends on the browser and OS.
-Unknown payload fields (including `custom_data`) are not notification options.
+Unknown payload fields are not notification options. Optional Advanced options
+are passed to `showNotification` only when present:
+
+| Relay payload field  | Value                                                         |
+| -------------------- | ------------------------------------------------------------- |
+| `requireInteraction` | Boolean; keep on screen until dismissed                       |
+| `silent`             | Boolean; suppress sound/vibration                             |
+| `tag`                | Replacement tag (1–64 characters: letters, digits, `_ . : -`) |
+| `renotify`           | Boolean; requires `tag`                                       |
+| `vibrate`            | 1–10 integer durations, each 0–10000 ms                       |
+| `lang`               | BCP 47 language tag (up to 35 characters)                     |
+| `dir`                | `auto`, `ltr`, or `rtl`                                       |
+| `timestamp`          | Event time as epoch milliseconds                              |
+| `app_badge`          | Integer 0–99999; 0 clears the app badge                       |
+| `custom_data`        | JSON object retained as `notification.data.custom_data`       |
+
+The relay validates these fields (and converts a rendered ISO timestamp to epoch
+milliseconds). Composer `require_interaction` becomes relay `requireInteraction`.
+The worker does not add defaults when options are absent. It coerces option types,
+drops invalid `dir`/timestamps, drops `vibrate` when silent, and drops `renotify`
+without a nonempty tag. Malformed coercions fall back to base options.
+Browser/OS support varies;
+unsupported notification options may be ignored. `app_badge` is distinct from the
+notification `badge` image: it calls worker `navigator.setAppBadge(count)` or
+`clearAppBadge()` when available. Unsupported or rejected badging does not prevent
+notification display or delivery metrics.
 
 An action click opens its `url`, falling back to `link` when omitted; a body click
 opens `link`. Click destinations must resolve to HTTPS. Relative links resolve
@@ -208,6 +271,59 @@ localhost, relative links therefore also open `/`. Delivered/opened
 metrics use the delivery ID and subscription endpoint. Action clicks add the
 `action` ID to the opened metric. Navigation never waits for the metrics POST;
 closing a notification sends no metric.
+
+### Custom data and page events
+
+After starting the opened metric, the worker calls `openWindow` to open the click
+destination (the browser may reuse/focus an existing window). It hands the click
+only to that returned same-origin client, once, matching readiness by client ID
+rather than URL so redirects and router URL changes work. Other matching tabs
+receive no click. The plugin dispatches `{ deliveryId, action, customData }` in a
+`cio:webpush:click` window `CustomEvent` and invokes click callbacks. `action` is
+the button ID, or `''` for a body click; `customData` is `undefined` when absent
+or malformed (malformed data is logged once per plugin instance). Worker
+postMessage type names are private implementation details:
+
+```ts
+const stop = analytics.webPush!.onClick(
+  ({ deliveryId, action, customData }) => {
+    console.log(deliveryId, action, customData?.orderId)
+  }
+)
+// Alternatively (do not use both unless you want both handlers):
+window.addEventListener('cio:webpush:click', (event) => {
+  console.log(event.detail.customData)
+})
+// Remove a callback when its component unmounts:
+stop()
+```
+
+The published `WebPushClickEvent`, `WebPushReceivedEvent`, and `WebPushAPI` types
+include these APIs; window event names are typed through `WindowEventMap`.
+Register handlers during page initialization, including on destinations opened
+by a click. The worker waits up to 10 seconds for the plugin's readiness handshake
+so a newly opened page can install its message listener. No click data is handed
+to any tab except the client returned by `openWindow`. If no accessible client exists (for example, a cross-origin
+destination), or the plugin does not load in time, navigation and metrics still
+work but there is no page callback. The handoff is best-effort, not durable storage.
+Unloading the plugin removes its message listeners and click callbacks.
+
+Delivery payloads do not identify the original user. To avoid handing an old
+user's in-flight data to a new identity, reset or an identity change since
+registration suppresses click and received handoffs for the rest of that plugin
+instance, even after re-registration. A fresh instance can resume under its
+current registered identity; this guard cannot identify old deliveries after a
+reload. Notifications and metrics still work. Do not put secrets in custom data.
+
+On push, the worker also notifies controlled open window clients. The plugin
+dispatches `cio:webpush:received` with a cleaned `{ deliveryId, title, customData }`
+detail, not the raw worker payload; it does not change page UI:
+
+```ts
+window.addEventListener('cio:webpush:received', (event) => {
+  console.log(event.detail.deliveryId, event.detail.customData)
+})
+```
 
 ### DEVIATIONS
 
@@ -229,31 +345,32 @@ key or a private VAPID key. The public snippet uses `cioanalytics`; if you set
 <button id="subscribe" disabled>Enable notifications</button>
 <script src="/dist/umd/webPushPlugin.min.js"></script>
 <script>
-  const analytics = window.cioanalytics; // match your snippet's global name
+  const analytics = window.cioanalytics // match your snippet's global name
   analytics.ready(async function () {
     try {
-      await analytics.register(CustomerIOWebPush.WebPushPlugin({
-        vapidPublicKey: '<YOUR_PUBLIC_VAPID_KEY>',
-        serviceWorkerUrl: '/cio-webpush-sw.js',
-        trackUrl: 'https://track.customer.io' // EU: https://track-eu.customer.io
-      }));
-      await analytics.identify('<YOUR_USER_ID>');
-      const button = document.getElementById('subscribe');
-      button.disabled = false;
+      await analytics.register(
+        CustomerIOWebPush.WebPushPlugin({
+          vapidPublicKey: '<YOUR_PUBLIC_VAPID_KEY>',
+          serviceWorkerUrl: '/cio-webpush-sw.js',
+          trackUrl: 'https://track.customer.io', // EU: https://track-eu.customer.io
+        })
+      )
+      await analytics.identify('<YOUR_USER_ID>')
+      const button = document.getElementById('subscribe')
+      button.disabled = false
       button.onclick = function () {
-        analytics.webPush.subscribe().then(console.log).catch(console.error);
-      };
+        analytics.webPush.subscribe().then(console.log).catch(console.error)
+      }
     } catch (error) {
-      console.error(error);
+      console.error(error)
     }
-  });
+  })
 </script>
 ```
 
 `yarn browser+deps build` emits the UMD bundle in `packages/browser/dist/umd/`,
 the static worker in `packages/browser/dist/`, and npm JS/types in
-`packages/browser/dist/{pkg,cjs,types}/`. The worker ships unbuilt: `yarn browser
-test` runs its tests on `src/plugins/web-push-plugin/cio-webpush-sw.js`, so it
+`packages/browser/dist/{pkg,cjs,types}/`. The worker ships unbuilt: `yarn browser test` runs its tests on `src/plugins/web-push-plugin/cio-webpush-sw.js`, so it
 needs no build, and the webpack build fails if the `dist/cio-webpush-sw.js` it
 writes differs from that source.
 
@@ -266,7 +383,7 @@ import { AnalyticsBrowser } from '@customerio/cdp-analytics-browser'
 
 const cioanalytics = AnalyticsBrowser.load({
   cdnURL: 'https://cdp-eu.customer.io',
-  writeKey: '<YOUR_WRITE_KEY>'
+  writeKey: '<YOUR_WRITE_KEY>',
 })
 
 cioanalytics.identify('hello world')

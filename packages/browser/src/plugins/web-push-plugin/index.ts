@@ -7,6 +7,7 @@ import {
   deviceDeliveryEvent,
   deviceFinal,
 } from '../customerio/device-delivery'
+import { deviceAttributes } from './device-attributes'
 
 export interface WebPushSubscriptionJSON {
   endpoint: string
@@ -21,7 +22,29 @@ export interface WebPushPluginSettings {
   enabled?: boolean
 }
 
+export interface WebPushClickEvent {
+  deliveryId: string
+  /** Empty string for a notification body click. */
+  action: string
+  customData?: Record<string, unknown>
+}
+
+export interface WebPushReceivedEvent {
+  deliveryId: string
+  title: string
+  customData?: Record<string, unknown>
+}
+
+declare global {
+  interface WindowEventMap {
+    'cio:webpush:click': CustomEvent<WebPushClickEvent>
+    'cio:webpush:received': CustomEvent<WebPushReceivedEvent>
+  }
+}
+
 export interface WebPushAPI {
+  /** Returns a function that removes this click listener. */
+  onClick(callback: (event: WebPushClickEvent) => void): () => void
   requestPermission(): Promise<NotificationPermission>
   subscribe(opts?: {
     vapidPublicKey?: string
@@ -103,6 +126,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     registered?: false
     pendingDelete?: Order & { attempts?: number; nextAttempt?: number }
     pendingCreate?: Order
+    attributesFingerprint?: string
   }
   // Keep counters after logout/unsubscribe and across worker path changes.
   const orders = new Map<string, number>()
@@ -131,6 +155,11 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       ? navigator.locks.request(`cio-webpush:${endpoint}`, increment)
       : increment()
   }
+  // Without a delivery-owner marker, an identity transition makes an in-flight
+  // handoff ambiguous. Fail closed for the rest of this plugin instance.
+  let handoffOwner: string | null | undefined
+  let identityChanged = false
+  let warnedCustomData = false
   let memory: Device | null = null
   const storageKey = () =>
     `cio-webpush:${new URL(workerUrl, location.href).pathname}`
@@ -164,6 +193,8 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   }
   const pending = new Set<(error?: Error) => void>()
   const identified = () => {
+    if (handoffOwner && handoffOwner !== analytics.user().id())
+      identityChanged = true
     if (analytics.user().id()) {
       const waiting = pending.size > 0
       pending.forEach((finish) => finish())
@@ -327,6 +358,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     }
   }
   const reset = () => {
+    identityChanged = true
     background(
       mutate(async () => {
         const previous = stored()
@@ -336,11 +368,21 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       })
     )
   }
+  const attributes = (subscription: PushSubscription) => ({
+    ...deviceAttributes(navigator),
+    webpush_expiration_time:
+      typeof subscription.expirationTime === 'number' &&
+      Number.isSafeInteger(subscription.expirationTime) &&
+      subscription.expirationTime >= 0
+        ? subscription.expirationTime
+        : null,
+  })
   const registerDevice = async (
     subscription: PushSubscription,
     force = true
   ) => {
     const value = json(subscription)
+    const metadata = attributes(subscription)
     await identity()
     return mutate(async () => {
       // Identity may have been reset while this operation was queued.
@@ -354,7 +396,8 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         previous?.endpoint === value.endpoint &&
         previous.userId === userId &&
         previous.registered !== false &&
-        !previous.pendingDelete
+        !previous.pendingDelete &&
+        previous.attributesFingerprint === JSON.stringify(metadata)
       )
         return value
       if (
@@ -391,6 +434,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           webpush_p256dh: value.keys.p256dh,
           webpush_auth: value.keys.auth,
           user_agent: navigator.userAgent,
+          ...metadata,
         },
         device(value.endpoint, userId, order)
       )
@@ -398,7 +442,12 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         throw new Error(
           'Web push device registration was not accepted; retry subscribe.'
         )
-      save({ endpoint: value.endpoint, userId })
+      if (handoffOwner === undefined) handoffOwner = userId
+      save({
+        endpoint: value.endpoint,
+        userId,
+        attributesFingerprint: JSON.stringify(metadata),
+      })
       return value
     })
   }
@@ -423,7 +472,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       (force ||
         previous?.endpoint !== subscription.endpoint ||
         previous?.userId !== analytics.user().id() ||
-        previous?.registered === false)
+        previous?.registered === false ||
+        previous?.attributesFingerprint !==
+          JSON.stringify(attributes(subscription)))
     )
       await registerDevice(subscription, force)
   }
@@ -432,11 +483,67 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       console.warn('Customer.io web push:', error)
     )
   }
+  const clickListeners = new Set<(event: WebPushClickEvent) => void>()
+  const ready = (worker?: ServiceWorker | null) =>
+    worker?.postMessage({ type: 'cio-webpush-ready' })
+  const controllerchange = () => ready(serviceWorker?.controller)
   const message = (event: MessageEvent) => {
     if (event.data?.type === 'cio-webpush-subscriptionchange')
       background(reconcile(true))
+    if (event.data?.type === 'cio-webpush-check-ready')
+      ready(event.source as ServiceWorker | null)
+    if (typeof event.data?.deliveryId !== 'string') return
+    if (
+      identityChanged ||
+      (handoffOwner && handoffOwner !== analytics.user().id())
+    )
+      return
+    let customData = event.data.customData
+    if (
+      customData !== undefined &&
+      (!customData ||
+        typeof customData !== 'object' ||
+        Array.isArray(customData) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(customData)))
+    ) {
+      customData = undefined
+      if (!warnedCustomData) {
+        warnedCustomData = true
+        console.warn('Customer.io web push: ignoring malformed custom data.')
+      }
+    }
+    if (
+      event.data.type === 'cio-webpush-click' &&
+      typeof event.data.action === 'string'
+    ) {
+      const detail: WebPushClickEvent = {
+        deliveryId: event.data.deliveryId,
+        action: event.data.action,
+        customData,
+      }
+      window.dispatchEvent(new CustomEvent('cio:webpush:click', { detail }))
+      clickListeners.forEach((callback) => {
+        try {
+          callback(detail)
+        } catch (error) {
+          console.warn('Customer.io web push click callback failed:', error)
+        }
+      })
+    }
+    if (event.data.type === 'cio-webpush-received') {
+      const detail: WebPushReceivedEvent = {
+        deliveryId: event.data.deliveryId,
+        title: typeof event.data.title === 'string' ? event.data.title : '',
+        customData,
+      }
+      window.dispatchEvent(new CustomEvent('cio:webpush:received', { detail }))
+    }
   }
   const api: WebPushAPI = {
+    onClick: (callback) => {
+      clickListeners.add(callback)
+      return () => clickListeners.delete(callback)
+    },
     requestPermission: async () => {
       supported()
       return Notification.requestPermission()
@@ -616,6 +723,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       } catch {
         /* Persistence is optional in private browsing. */
       }
+      handoffOwner = stored()?.userId ?? analytics.user().id() ?? undefined
+      if (handoffOwner && handoffOwner !== analytics.user().id())
+        identityChanged = true
       analytics.webPush = api
       analytics.on('identify', identified)
       analytics.on('reset', reset)
@@ -624,6 +734,8 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       window.addEventListener('pageshow', pageshow)
       if (serviceWorker) {
         serviceWorker.addEventListener('message', message)
+        serviceWorker.addEventListener('controllerchange', controllerchange)
+        controllerchange()
         // Only inspect an existing subscription; loading never registers or prompts.
         if (hasPushSupport()) background(reconcile())
       }
@@ -639,6 +751,8 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       window.removeEventListener('pagehide', pagehide)
       window.removeEventListener('pageshow', pageshow)
       serviceWorker?.removeEventListener('message', message)
+      serviceWorker?.removeEventListener('controllerchange', controllerchange)
+      clickListeners.clear()
       if (analytics?.webPush === api) delete analytics.webPush
       return Promise.resolve()
     },
