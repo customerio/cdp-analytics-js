@@ -96,24 +96,24 @@ describe('Secret keys', () => {
     fetchCalls = []
   })
 
-  it('rejects ak_ keys before any request', async () => {
+  it('rejects sk_ keys before any request', async () => {
     await expect(
-      AnalyticsBrowser.load({ writeKey: 'ak_us_secret' })
+      AnalyticsBrowser.load({ writeKey: 'sk_us_secret' })
     ).rejects.toThrow('Use your public key in the browser')
 
     expect(fetchCalls.length).toBe(0)
   })
 
-  it('loads and tracks with wk_ keys', async () => {
+  it('loads and tracks with pk_ keys', async () => {
     const [analytics] = await AnalyticsBrowser.load({
-      writeKey: 'wk_us_public',
+      writeKey: 'pk_us_public',
       plugins: [xt],
     })
 
     const ctx = await analytics.track('Hello')
 
     expect(ctx.event.event).toBe('Hello')
-    expect(fetchCalls[0].url).toContain('wk_us_public')
+    expect(fetchCalls[0].url).toContain('pk_us_public')
   })
 })
 

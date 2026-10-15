@@ -105,8 +105,8 @@ describe('standalone bundle', () => {
     expect(spy).toHaveBeenCalledWith('write_key_abc_123', {})
   })
 
-  it('refuses secret ak_ keys without loading', async () => {
-    window.analyticsWriteKey = 'ak_us_secret'
+  it('refuses secret sk_ keys without loading', async () => {
+    window.analyticsWriteKey = 'sk_us_secret'
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
     const spy = jest.spyOn(AnalyticsBrowser, 'standalone')
 
