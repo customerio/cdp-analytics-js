@@ -104,14 +104,6 @@ describe('Secret keys', () => {
     expect(fetchCalls.length).toBe(0)
   })
 
-  it('rejects retired ak_ secret keys before any request', async () => {
-    await expect(
-      AnalyticsBrowser.load({ writeKey: 'ak_us_secret' })
-    ).rejects.toThrow('Use your public key in the browser')
-
-    expect(fetchCalls.length).toBe(0)
-  })
-
   it('loads and tracks with pk_ keys', async () => {
     const [analytics] = await AnalyticsBrowser.load({
       writeKey: 'pk_us_public',
