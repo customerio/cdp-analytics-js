@@ -97,11 +97,28 @@ describe('Secret keys', () => {
   })
 
   it('rejects sk_ keys before any request', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
     await expect(
       AnalyticsBrowser.load({ writeKey: 'sk_us_secret' })
     ).rejects.toThrow('Use your public key in the browser')
 
     expect(fetchCalls.length).toBe(0)
+    errorSpy.mockRestore()
+  })
+
+  it('logs the sk_ error when load is not awaited', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    const analytics = AnalyticsBrowser.load({ writeKey: 'sk_us_secret' })
+    await sleep(0)
+
+    expect(analytics).toBeInstanceOf(AnalyticsBrowser)
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Use your public key in the browser')
+    )
+    expect(fetchCalls.length).toBe(0)
+    errorSpy.mockRestore()
   })
 
   it('loads and tracks with pk_ keys', async () => {

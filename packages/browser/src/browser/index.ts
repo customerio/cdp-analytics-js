@@ -289,7 +289,11 @@ async function loadAnalytics(
   options: InitOptions = {},
   preInitBuffer: PreInitMethodCallBuffer
 ): Promise<[Analytics, Context]> {
-  if (isSecretKey(settings.writeKey)) throw new Error(SECRET_KEY_ERROR)
+  if (isSecretKey(settings.writeKey)) {
+    // An unawaited load() swallows this rejection, so log it as well.
+    console.error(SECRET_KEY_ERROR)
+    throw new Error(SECRET_KEY_ERROR)
+  }
 
   if (options.globalAnalyticsKey)
     setGlobalAnalyticsKey(options.globalAnalyticsKey)
