@@ -700,6 +700,23 @@ describe('CustomerioNodePlugin', () => {
       })
     })
 
+    it('sends keys with an unknown two letter prefix with Basic auth', async () => {
+      expect(await sendTrack({ writeKey: 'xx_us_abc' })).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: 'Basic eHhfdXNfYWJjOg==',
+      })
+    })
+
+    it.each([['sk_eu_abc_def\n'], [' sk_eu_abc_def']])(
+      'trims whitespace around %j',
+      async (writeKey) => {
+        expect(await sendTrack({ writeKey })).toEqual({
+          url: 'https://cdp-eu.customer.io/v1/batch',
+          authorization: 'Bearer sk_eu_abc_def',
+        })
+      }
+    )
+
     it('uses the EU host for sk_eu_ keys when no host is set', async () => {
       expect(await sendTrack({ writeKey: 'sk_eu_abc_def' })).toEqual({
         url: 'https://cdp-eu.customer.io/v1/batch',

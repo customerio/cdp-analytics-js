@@ -14,8 +14,8 @@ function sleep(timeoutInMs: number): Promise<void> {
 
 function noop() {}
 
-// Prefixed API keys: {type}_{us|eu}_..., where us/eu is the data center.
-const PREFIXED_KEY_REGEX = /^[a-z]{2}_(us|eu)_/
+// Prefixed API keys: {pk|sk}_{us|eu}_..., where us/eu is the data center.
+const PREFIXED_KEY_REGEX = /^(pk|sk)_(us|eu)_/
 const US_HOST = 'https://cdp.customer.io'
 const EU_HOST = 'https://cdp-eu.customer.io'
 
@@ -65,11 +65,12 @@ export class Publisher {
     this._maxRetries = maxRetries
     this._maxEventsInBatch = Math.max(maxEventsInBatch, 1)
     this._flushInterval = flushInterval
-    const prefixedKey = PREFIXED_KEY_REGEX.exec(writeKey)
-    this._auth = prefixedKey
-      ? `Bearer ${writeKey}`
-      : `Basic ${b64encode(`${writeKey}:`)}`
-    const keyRegion = prefixedKey?.[1]
+    // Keys read from secret files often end in a newline, which fails the
+    // prefix check and makes node-fetch v2 throw with the key in the message.
+    const key = writeKey.trim()
+    const prefixedKey = PREFIXED_KEY_REGEX.exec(key)
+    this._auth = prefixedKey ? `Bearer ${key}` : `Basic ${b64encode(`${key}:`)}`
+    const keyRegion = prefixedKey?.[2]
     const defaultHost = keyRegion === 'eu' ? EU_HOST : US_HOST
     // An explicit host wins so proxies keep working, but the other region's
     // CDP host accepts the request and silently drops every event.
