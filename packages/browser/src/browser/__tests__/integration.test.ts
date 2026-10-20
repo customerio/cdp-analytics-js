@@ -91,6 +91,49 @@ beforeEach(() => {
   setGlobalCDNUrl(undefined as any)
 })
 
+describe('Secret keys', () => {
+  beforeEach(() => {
+    fetchCalls = []
+  })
+
+  it('rejects sk_ keys before any request', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(
+      AnalyticsBrowser.load({ writeKey: 'sk_us_secret' })
+    ).rejects.toThrow('Use your public key in the browser')
+
+    expect(fetchCalls.length).toBe(0)
+    errorSpy.mockRestore()
+  })
+
+  it('logs the sk_ error when load is not awaited', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    const analytics = AnalyticsBrowser.load({ writeKey: 'sk_us_secret' })
+    await sleep(0)
+
+    expect(analytics).toBeInstanceOf(AnalyticsBrowser)
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Use your public key in the browser')
+    )
+    expect(fetchCalls.length).toBe(0)
+    errorSpy.mockRestore()
+  })
+
+  it('loads and tracks with pk_ keys', async () => {
+    const [analytics] = await AnalyticsBrowser.load({
+      writeKey: 'pk_us_public',
+      plugins: [xt],
+    })
+
+    const ctx = await analytics.track('Hello')
+
+    expect(ctx.event.event).toBe('Hello')
+    expect(fetchCalls[0].url).toContain('pk_us_public')
+  })
+})
+
 describe.skip('Initialization', () => {
   beforeEach(async () => {
     fetchCalls = []
