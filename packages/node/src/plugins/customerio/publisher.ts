@@ -12,10 +12,12 @@ function sleep(timeoutInMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, timeoutInMs))
 }
 
-function noop() { }
+function noop() {}
 
 // Prefixed API keys: {type}_{us|eu}_..., where us/eu is the data center.
 const PREFIXED_KEY_REGEX = /^[a-z]{2}_(us|eu)_/
+const US_HOST = 'https://cdp.customer.io'
+const EU_HOST = 'https://cdp-eu.customer.io'
 
 interface PendingItem {
   resolver: (ctx: Context) => void
@@ -67,10 +69,20 @@ export class Publisher {
     this._auth = prefixedKey
       ? `Bearer ${writeKey}`
       : `Basic ${b64encode(`${writeKey}:`)}`
-    const defaultHost =
-      prefixedKey?.[1] === 'eu'
-        ? 'https://cdp-eu.customer.io'
-        : 'https://cdp.customer.io'
+    const keyRegion = prefixedKey?.[1]
+    const defaultHost = keyRegion === 'eu' ? EU_HOST : US_HOST
+    // An explicit host wins so proxies keep working, but the other region's
+    // CDP host accepts the request and silently drops every event.
+    const otherRegionHost = keyRegion === 'eu' ? US_HOST : EU_HOST
+    if (
+      keyRegion &&
+      host &&
+      host.replace(/\/+$/, '').toLowerCase() === otherRegionHost
+    ) {
+      console.warn(
+        `Customer.io: this ${keyRegion} API key is being sent to ${host}, which is the other region's CDP host. Events will be dropped. Remove the host setting or use ${defaultHost}.`
+      )
+    }
     this._url = tryCreateFormattedUrl(host ?? defaultHost, path ?? '/v1/batch')
     this._httpRequestTimeout = httpRequestTimeout ?? 10000
   }

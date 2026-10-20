@@ -708,15 +708,35 @@ describe('CustomerioNodePlugin', () => {
     })
 
     it('uses an explicitly set host over the key data center', async () => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
       expect(
         await sendTrack({
           writeKey: 'sk_eu_abc_def',
-          host: 'https://cdp.customer.io',
+          host: 'https://proxy.example.com',
         })
       ).toEqual({
-        url: 'https://cdp.customer.io/v1/batch',
+        url: 'https://proxy.example.com/v1/batch',
         authorization: 'Bearer sk_eu_abc_def',
       })
+      expect(warn).not.toHaveBeenCalled()
+      warn.mockRestore()
     })
+
+    it.each([
+      ['sk_eu_abc_def', 'https://cdp.customer.io'],
+      ['pk_us_abc_def', 'https://cdp-eu.customer.io/'],
+    ])(
+      'warns when %s is sent to the other region host %s',
+      async (writeKey, host) => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+        const { url } = await sendTrack({ writeKey, host })
+        expect(url).toBe(`${host.replace(/\/$/, '')}/v1/batch`)
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(warn.mock.calls[0][0]).toContain(
+          "which is the other region's CDP host"
+        )
+        warn.mockRestore()
+      }
+    )
   })
 })
