@@ -12,7 +12,12 @@ function sleep(timeoutInMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, timeoutInMs))
 }
 
-function noop() { }
+function noop() {}
+
+// Prefixed API keys: {pk|sk}_{us|eu}_..., where us/eu is the data center.
+const PREFIXED_KEY_REGEX = /^(pk|sk)_(us|eu)_/
+const US_HOST = 'https://cdp.customer.io'
+const EU_HOST = 'https://cdp-eu.customer.io'
 
 interface PendingItem {
   resolver: (ctx: Context) => void
@@ -60,11 +65,26 @@ export class Publisher {
     this._maxRetries = maxRetries
     this._maxEventsInBatch = Math.max(maxEventsInBatch, 1)
     this._flushInterval = flushInterval
-    this._auth = b64encode(`${writeKey}:`)
-    this._url = tryCreateFormattedUrl(
-      host ?? 'https://cdp.customer.io',
-      path ?? '/v1/batch'
-    )
+    // Keys read from secret files often end in a newline, which fails the
+    // prefix check and makes node-fetch v2 throw with the key in the message.
+    const key = writeKey.trim()
+    const prefixedKey = PREFIXED_KEY_REGEX.exec(key)
+    this._auth = prefixedKey ? `Bearer ${key}` : `Basic ${b64encode(`${key}:`)}`
+    const keyRegion = prefixedKey?.[2]
+    const defaultHost = keyRegion === 'eu' ? EU_HOST : US_HOST
+    // An explicit host wins so proxies keep working, but the other region's
+    // CDP host accepts the request and silently drops every event.
+    const otherRegionHost = keyRegion === 'eu' ? US_HOST : EU_HOST
+    if (
+      keyRegion &&
+      host &&
+      host.replace(/\/+$/, '').toLowerCase() === otherRegionHost
+    ) {
+      console.warn(
+        `Customer.io: this ${keyRegion} API key is being sent to ${host}, which is the other region's CDP host. Events will be dropped. Remove the host setting or use ${defaultHost}.`
+      )
+    }
+    this._url = tryCreateFormattedUrl(host ?? defaultHost, path ?? '/v1/batch')
     this._httpRequestTimeout = httpRequestTimeout ?? 10000
   }
 
@@ -196,7 +216,7 @@ export class Publisher {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Basic ${this._auth}`,
+            Authorization: this._auth,
             'User-Agent': 'cdp-analytics-node/latest',
           },
           body: payload,

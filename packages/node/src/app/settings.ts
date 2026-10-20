@@ -7,7 +7,7 @@ export interface AnalyticsSettings {
   writeKey: string
   /**
   /**
-   * The base URL of the API. Default: "https://cdp.customer.io"
+   * The base URL of the API. Default: "https://cdp.customer.io", or "https://cdp-eu.customer.io" for a key with `_eu_` in it.
    */
   host?: string
   /**

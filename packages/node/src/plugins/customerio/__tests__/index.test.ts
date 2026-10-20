@@ -659,4 +659,101 @@ describe('CustomerioNodePlugin', () => {
       assertHttpRequestEmittedEvent(fn.mock.lastCall[0])
     })
   })
+
+  describe('prefixed API keys', () => {
+    const sendTrack = async (props: Partial<PublisherProps>) => {
+      const { plugin: customerioPlugin } = createTestNodePlugin({
+        maxRetries: 3,
+        maxEventsInBatch: 1,
+        flushInterval: 1000,
+        writeKey: '',
+        ...props,
+      })
+      fetcher.mockReturnValueOnce(createSuccess())
+      await customerioPlugin.track(
+        new Context(eventFactory.track('foo', undefined, { userId: 'foo' }))
+      )
+      const [url, request] = fetcher.mock.lastCall
+      return { url, authorization: request.headers.Authorization }
+    }
+
+    it('sends sk_ keys as a Bearer token', async () => {
+      const writeKey = 'sk_us_abc_def'
+      expect(await sendTrack({ writeKey })).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: `Bearer ${writeKey}`,
+      })
+    })
+
+    it('sends pk_ keys as a Bearer token', async () => {
+      const writeKey = 'pk_us_abc_def'
+      expect(await sendTrack({ writeKey })).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: `Bearer ${writeKey}`,
+      })
+    })
+
+    it('sends legacy keys with Basic auth', async () => {
+      expect(await sendTrack({ writeKey: 'legacy-write-key' })).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: 'Basic bGVnYWN5LXdyaXRlLWtleTo=',
+      })
+    })
+
+    it('sends keys with an unknown two letter prefix with Basic auth', async () => {
+      expect(await sendTrack({ writeKey: 'xx_us_abc' })).toEqual({
+        url: 'https://cdp.customer.io/v1/batch',
+        authorization: 'Basic eHhfdXNfYWJjOg==',
+      })
+    })
+
+    it.each([['sk_eu_abc_def\n'], [' sk_eu_abc_def']])(
+      'trims whitespace around %j',
+      async (writeKey) => {
+        expect(await sendTrack({ writeKey })).toEqual({
+          url: 'https://cdp-eu.customer.io/v1/batch',
+          authorization: 'Bearer sk_eu_abc_def',
+        })
+      }
+    )
+
+    it('uses the EU host for sk_eu_ keys when no host is set', async () => {
+      expect(await sendTrack({ writeKey: 'sk_eu_abc_def' })).toEqual({
+        url: 'https://cdp-eu.customer.io/v1/batch',
+        authorization: 'Bearer sk_eu_abc_def',
+      })
+    })
+
+    it('uses an explicitly set host over the key data center', async () => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+      expect(
+        await sendTrack({
+          writeKey: 'sk_eu_abc_def',
+          host: 'https://proxy.example.com',
+        })
+      ).toEqual({
+        url: 'https://proxy.example.com/v1/batch',
+        authorization: 'Bearer sk_eu_abc_def',
+      })
+      expect(warn).not.toHaveBeenCalled()
+      warn.mockRestore()
+    })
+
+    it.each([
+      ['sk_eu_abc_def', 'https://cdp.customer.io'],
+      ['pk_us_abc_def', 'https://cdp-eu.customer.io/'],
+    ])(
+      'warns when %s is sent to the other region host %s',
+      async (writeKey, host) => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+        const { url } = await sendTrack({ writeKey, host })
+        expect(url).toBe(`${host.replace(/\/$/, '')}/v1/batch`)
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(warn.mock.calls[0][0]).toContain(
+          "which is the other region's CDP host"
+        )
+        warn.mockRestore()
+      }
+    )
+  })
 })
