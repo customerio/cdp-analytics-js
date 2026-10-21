@@ -8,6 +8,7 @@ describe('Customer.io In-App Plugin', () => {
   let analytics: Analytics
   let gistMessageShown: Function
   let gistMessageAction: Function
+  let gistMessageDismissed: Function
   let gistInboxMessageAction: Function
   let gistEventDispatched: Function
 
@@ -31,6 +32,8 @@ describe('Customer.io In-App Plugin', () => {
           gistMessageShown = cb
         } else if (name === 'messageAction') {
           gistMessageAction = cb
+        } else if (name === 'messageDismissed') {
+          gistMessageDismissed = cb
         } else if (name === 'inboxMessageAction') {
           gistInboxMessageAction = cb
         } else if (name === 'eventDispatched') {
@@ -487,6 +490,62 @@ describe('Customer.io In-App Plugin', () => {
       })
       expect(spy).toHaveBeenCalledTimes(0)
     })
+
+    it('should trigger content event for a user dismissal', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageDismissed({
+        messageId: 'a-test-in-app',
+        dismissReason: 'dismissed',
+        properties: {
+          gist: {
+            broadcast: {
+              broadcastIdInt: 10,
+              templateId: 20,
+            },
+          },
+        },
+      })
+      expect(spy).toBeCalledWith('Report Content Event', {
+        actionType: 'dismissed_content',
+        contentId: 10,
+        templateId: 20,
+        contentType: 'in_app_content',
+      })
+    })
+
+    it.each(['snoozed', 'displaced', undefined])(
+      'should not trigger content event when the hide reason is %s',
+      async (dismissReason) => {
+        const spy = jest.spyOn(analytics, 'track')
+        gistMessageDismissed({
+          messageId: 'a-test-in-app',
+          dismissReason,
+          properties: {
+            gist: {
+              broadcast: {
+                broadcastIdInt: 10,
+                templateId: 20,
+              },
+            },
+          },
+        })
+        expect(spy).toHaveBeenCalledTimes(0)
+      }
+    )
+
+    it('should not trigger content event for a campaign message dismissal', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageDismissed({
+        messageId: 'a-test-in-app',
+        dismissReason: 'dismissed',
+        properties: {
+          gist: {
+            campaignId: 'testcampaign',
+          },
+        },
+      })
+      expect(spy).toHaveBeenCalledTimes(0)
+    })
   })
   describe('Embedded messages', () => {
     const embedWithIds = {
@@ -549,6 +608,25 @@ describe('Customer.io In-App Plugin', () => {
         action: 'gist://close',
         name: 'close',
       })
+      expect(spy).toHaveBeenCalledTimes(0)
+    })
+
+    it('reports a user dismissal through the same content event as a broadcast', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageDismissed({ ...embedWithIds, dismissReason: 'dismissed' })
+      expect(spy).toBeCalledWith('Report Content Event', {
+        actionType: 'dismissed_content',
+        contentId: 42,
+        templateId: 7,
+        contentType: 'in_app_content',
+      })
+      expect(spy).toBeCalledTimes(1)
+    })
+
+    it('reports nothing when an embed is snoozed or displaced', async () => {
+      const spy = jest.spyOn(analytics, 'track')
+      gistMessageDismissed({ ...embedWithIds, dismissReason: 'snoozed' })
+      gistMessageDismissed({ ...embedWithIds, dismissReason: 'displaced' })
       expect(spy).toHaveBeenCalledTimes(0)
     })
 
