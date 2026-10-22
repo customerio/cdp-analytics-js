@@ -245,6 +245,7 @@ test.each([null, 1800000000123, 0])(
           browser: 'Firefox',
           browser_version: '157',
           os: 'Linux',
+          origin: 'http://localhost',
           webpush_expiration_time: expirationTime,
         })
       }
@@ -505,6 +506,8 @@ test.each([
   'os',
   'expiry',
   'clear expiry',
+  'missing origin',
+  'origin',
 ])('reconciliation updates attribute fingerprint for %s', async (kind) => {
   const s = setup()
   const ua = jest
@@ -520,6 +523,21 @@ test.each([
         'cio-webpush:/cio-webpush-sw.js',
         JSON.stringify({ endpoint: value.endpoint, userId: 'person' })
       )
+    if (kind === 'missing origin' || kind === 'origin') {
+      // Browsers registered before the SDK sent origin, or under another one.
+      const stored = record()
+      const { origin, ...rest } = JSON.parse(stored.attributesFingerprint)
+      expect(origin).toBe('http://localhost')
+      const attributes =
+        kind === 'origin' ? { ...rest, origin: 'https://other.example' } : rest
+      localStorage.setItem(
+        'cio-webpush:/cio-webpush-sw.js',
+        JSON.stringify({
+          ...stored,
+          attributesFingerprint: JSON.stringify(attributes),
+        })
+      )
+    }
     if (kind === 'browser')
       ua.mockReturnValue('Mozilla/5.0 Firefox/155.0 Linux')
     if (kind === 'version') ua.mockReturnValue('Mozilla/5.0 Chrome/156.0 Linux')
@@ -536,6 +554,10 @@ test.each([
     if (kind === 'clear expiry')
       expect(jest.mocked(next.analytics.track).mock.calls[0][1]).toMatchObject({
         webpush_expiration_time: null,
+      })
+    if (kind !== 'unchanged')
+      expect(jest.mocked(next.analytics.track).mock.calls[0][1]).toMatchObject({
+        origin: 'http://localhost',
       })
     await next.plugin.unload?.(Context.system(), next.analytics)
     const again = setup()
@@ -900,6 +922,7 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
       webpush_auth: 'auth',
       user_agent: navigator.userAgent,
       ...deviceAttributes(navigator),
+      origin: 'http://localhost',
       webpush_expiration_time: null,
     },
     {

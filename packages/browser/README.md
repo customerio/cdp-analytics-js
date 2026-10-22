@@ -187,6 +187,7 @@ reconciliation) sends these device attributes alongside `webpush_p256dh` and
 | `browser`                 | `Chrome`, `Edge`, `Firefox`, `Safari`, `Opera`, `Samsung Internet`, or `Other`                                                                                       |
 | `browser_version`         | Major version only, as a string (for example, `'154'`); omitted when unknown                                                                                         |
 | `os`                      | `macOS`, `Windows`, `iOS`, `iPadOS`, `Android`, `Linux`, `ChromeOS`, or `Other`                                                                                      |
+| `origin`                  | The site's `location.origin` (for example, `'https://shop.example.com'`), so each browser records which site it subscribed on                                        |
 
 These finite browser/OS values support segments without parsing UA strings.
 The tiny built-in parser prefers `navigator.userAgentData` brands and platform
@@ -197,7 +198,7 @@ is detected using a Macintosh UA plus touch points. iOS Home Screen apps may
 omit a browser version: the worker's WebKit engine version is not a Safari major.
 Unknown expiry means **unknown**, not an expired subscription. The plugin sends
 null to clear a previously stored expiry. A persisted fingerprint of browser,
-major version, OS, and expiry triggers re-registration on changes (including
+major version, OS, origin, and expiry triggers re-registration on changes (including
 backfilling devices registered by older SDKs on their next page load). Unchanged
 attributes do not trigger another registration.
 

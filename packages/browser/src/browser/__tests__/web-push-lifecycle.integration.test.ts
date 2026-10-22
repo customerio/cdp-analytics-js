@@ -292,6 +292,7 @@ test.each(['identify without reset', 'lookup after reload', 'unsubscribe'])(
         userId: 'B',
         attributesFingerprint: JSON.stringify({
           ...deviceAttributes(navigator),
+          origin: location.origin,
           webpush_expiration_time: null,
         }),
       })
@@ -442,6 +443,7 @@ test('a new destination subscription remains reachable when device deletion fail
     userId: 'A',
     attributesFingerprint: JSON.stringify({
       ...deviceAttributes(navigator),
+      origin: location.origin,
       webpush_expiration_time: null,
     }),
     pendingDelete: {
@@ -542,6 +544,7 @@ test.each(['same path', 'different path'])(
       userId: 'A',
       attributesFingerprint: JSON.stringify({
         ...deviceAttributes(navigator),
+        origin: location.origin,
         webpush_expiration_time: null,
       }),
     })
@@ -659,6 +662,7 @@ test('identify A → subscribe → reset → identify B deletes A and registers 
     webpush_auth: 'auth',
     user_agent: navigator.userAgent,
     ...deviceAttributes(navigator),
+    origin: location.origin,
     webpush_expiration_time: null,
   })
   expect(events[1].anonymousId).toBeNull()
@@ -671,6 +675,7 @@ test('identify A → subscribe → reset → identify B deletes A and registers 
     userId: 'B',
     attributesFingerprint: JSON.stringify({
       ...deviceAttributes(navigator),
+      origin: location.origin,
       webpush_expiration_time: null,
     }),
   })
