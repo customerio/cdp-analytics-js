@@ -370,6 +370,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
   }
   const attributes = (subscription: PushSubscription) => ({
     ...deviceAttributes(navigator),
+    // Only the browser knows which site it subscribed on. Part of the
+    // fingerprint, so records registered without it re-register on load.
+    origin: location.origin,
     webpush_expiration_time:
       typeof subscription.expirationTime === 'number' &&
       Number.isSafeInteger(subscription.expirationTime) &&
