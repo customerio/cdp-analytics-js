@@ -156,15 +156,18 @@ The hosted worker updates itself. It bundles the complete runtime, so it works w
 no network request, and at startup it also tries `importScripts` on the Customer.io
 CDN's `cio-webpush-sw-runtime.v1.js` (the same file, published by every SDK
 release). When that copy is newer than the bundled one it runs instead, so worker
-fixes reach your site without re-copying the file. A blocked (for example by an
-ad blocker), failed, older, or broken import leaves the bundled copy in charge and
-the worker still installs. Browsers check the imported file during their regular
-service worker update checks (at least daily) and install the new version when it
-changes. Breaking changes ship as a new `.v2.js` file that existing hosted copies
-never load. If your site sets a Content Security Policy for the worker, allow
-`https://cdp.customer.io` and `https://cdp-eu.customer.io` in its `script-src`, or
-serve the runtime first-party with `runtimeUrl`. With `runtimeUrl: false`, update
-your hosted copy yourself when you update the SDK.
+fixes reach your site without re-copying the file. A blocked, failed, older, or
+broken import leaves the bundled copy in charge and the worker still installs.
+Browsers re-check a successfully imported runtime during their service worker
+update checks and install a new worker version when it changes; a worker installed
+while the import failed keeps its bundled copy until your hosted file changes.
+Ad blockers' default lists (for example EasyPrivacy in uBlock Origin) block
+`cdp.customer.io` on other sites, so to upgrade those browsers too, serve the runtime
+first-party with `runtimeUrl`. Breaking changes ship as a new `.v2.js` file that
+existing hosted copies never load. If your site sets a Content Security Policy for
+the worker, allow `https://cdp.customer.io` and `https://cdp-eu.customer.io` in its
+`script-src`, or use `runtimeUrl`. With `runtimeUrl: false`, update your hosted copy
+yourself when you update the SDK.
 
 Delivered/opened reports are saved in an IndexedDB outbox before sending. Offline
 requests and retryable HTTP failures retry on worker startup, push, notification
@@ -395,8 +398,10 @@ the static worker and its CDN runtime in `packages/browser/dist/`, and npm JS/ty
 needs no build, and the webpack build fails if the `dist/cio-webpush-sw.js` or
 `dist/cio-webpush-sw-runtime.v1.js` it writes differs from that source. Publish the
 runtime on the CDN at `/v1/analytics-js/cio-webpush-sw-runtime.v1.js` with every
-release; `scripts/build-prep.sh` sets the worker's version, which hosted copies
-compare with the CDN's.
+release, before sites deploy a hosted copy that imports it, and serve it with
+`Cache-Control: no-cache` (or `max-age=0`): Safari otherwise installs update after
+update that still run the HTTP-cached runtime. `scripts/build-prep.sh` sets the
+worker's version, which hosted copies compare with the CDN's.
 
 ## Other Regions
 
