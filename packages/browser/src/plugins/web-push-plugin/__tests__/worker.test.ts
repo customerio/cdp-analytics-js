@@ -19,6 +19,45 @@ describe('cio-webpush-sw.js', () => {
   }
   const notificationMarkers = { delivery_id: 'delivery', device_id: 'endpoint' }
 
+  test('keeps push alive after showing without delaying metrics or page messages', async () => {
+    let finishNativeDelivery: () => void = () => {}
+    const timer = jest.fn((resolve: () => void) => {
+      finishNativeDelivery = resolve
+    })
+    const s = createWorker(worker, undefined, {}, undefined, {
+      setTimeout: timer,
+    })
+    await s.startup
+    let finishShowing: () => void = () => {}
+    s.showNotification.mockImplementation(
+      () => new Promise<void>((resolve) => (finishShowing = resolve))
+    )
+    let delivered: () => void = () => {}
+    const reported = new Promise<void>((resolve) => (delivered = resolve))
+    s.fetch.mockImplementation(() => {
+      delivered()
+      return Promise.resolve({ ok: true })
+    })
+    let finished = false
+    const task = s
+      .invoke('push', { data: { json: () => relayMarkers } })
+      .then(() => {
+        finished = true
+      })
+    expect(s.showNotification).toHaveBeenCalledTimes(1)
+    expect(timer).not.toHaveBeenCalled()
+    finishShowing()
+    await reported
+    expect(timer).toHaveBeenCalledWith(expect.any(Function), 250)
+    expect(s.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'cio-webpush-received' })
+    )
+    expect(finished).toBe(false)
+    finishNativeDelivery()
+    await task
+    expect(finished).toBe(true)
+  })
+
   test.each([
     ['requireInteraction', true],
     ['requireInteraction', false],
