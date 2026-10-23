@@ -64,7 +64,8 @@ Options:
   import it into your own service worker with `importScripts` instead, your worker
   owns its lifecycle: set `self.cioWebPushLifecycle = false` before the import so
   the file skips `skipWaiting()`/`clients.claim()`, and register your worker with
-  the same `?track=` query so delivered and opened events still reach Customer.io.
+  the same `?track=` query so delivered and opened events still reach Customer.io
+  (and the same `?runtime=` query if you set `runtimeUrl`).
 - `trackUrl`: defaults to `https://track.customer.io`, or `https://track-eu.customer.io`
   when using the EU CDN. Set it explicitly when proxying the SDK or using the
   standalone plugin with a custom CDN.
@@ -73,7 +74,9 @@ Options:
   or `cdp-eu.customer.io` when `trackUrl` is the EU host. Pass an absolute URL or a
   root-relative path (for example `/cio/cio-webpush-sw-runtime.v1.js`) to serve it
   first-party through your proxy, or `false` to keep the worker's bundled copy and
-  make no request (registered as `?runtime=off`).
+  make no request (registered as `?runtime=off`). EU sites that proxy `trackUrl`
+  get the US CDN by default; set `runtimeUrl` to the `cdp-eu.customer.io` URL or
+  your own proxy.
 
 Public API on the initialized analytics instance:
 
@@ -147,8 +150,9 @@ classic script, so if your existing worker is a module service worker
 scope instead. The ordinary notification permission
 request still happens from your user action.
 
-The worker reads the metrics endpoint from its `?track=` query. When integrating
-with an existing worker, preserve this query in every host registration call;
+The worker reads the metrics endpoint from its `?track=` query, and the runtime
+location from `?runtime=` when you set `runtimeUrl`. When integrating with an
+existing worker, preserve both in every host registration call;
 registering the bare URL later disables new delivered/opened metrics, but queued
 reports retain and retry their original endpoint. Rebuild/copy the push handlers when updating the SDK.
 
@@ -402,11 +406,12 @@ release, before sites deploy a hosted copy that imports it, and serve it with
 `Cache-Control: no-cache` (or `max-age=0`): Safari otherwise installs update after
 update that still run the HTTP-cached runtime. `scripts/build-prep.sh` sets the
 worker's version, which hosted copies compare with the CDN's. A hosted copy accepts
-a runtime only if it reports `api: 1` and a strictly newer release version
-(prereleases are never installed), adds no listeners when evaluated, and registers
-exactly one complete handler set through `install(env)`'s `addEventListener` before
-`install` returns; otherwise none of its listeners are registered and the bundled
-copy installs.
+a runtime only if it reports `api: 1` and a strictly newer release version (a valid
+semver string; prereleases are never installed and build metadata is ignored), adds
+no listeners when evaluated, and registers exactly one complete handler set through
+`install(env)`'s `addEventListener` before `install` returns; otherwise none of its
+listeners are registered and the bundled copy installs. Listener options are
+ignored.
 
 ## Other Regions
 

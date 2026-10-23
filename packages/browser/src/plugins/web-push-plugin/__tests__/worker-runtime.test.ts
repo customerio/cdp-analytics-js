@@ -125,6 +125,14 @@ describe('cio-webpush-sw.js runtime upgrade', () => {
     ['a zero-padded', () => `0${nextPatch(bundled)}`],
     ['a space-padded', () => ` ${nextPatch(bundled)}`],
     ['a prerelease', () => `${nextPatch(bundled)}-beta.1`],
+    ['an empty prerelease', () => `${nextPatch(bundled)}-`],
+    ['an empty prerelease identifier', () => `${nextPatch(bundled)}-beta..1`],
+    ['an empty build', () => `${nextPatch(bundled)}+`],
+    ['an all-dots build', () => `${nextPatch(bundled)}+..`],
+    ['a leading-dot build', () => `${nextPatch(bundled)}+.build`],
+    ['a trailing-dot build', () => `${nextPatch(bundled)}+build.`],
+    ['an empty build identifier', () => `${nextPatch(bundled)}+build..7`],
+    ['a newline-terminated', () => `${nextPatch(bundled)}\n`],
   ])('keeps the bundled copy for %s runtime version', async (_, version) => {
     const s = setup(tracked, { [usRuntime]: runtimeAt(version()) })
     expect(s.importScripts).toHaveBeenCalledWith(usRuntime)
@@ -133,12 +141,55 @@ describe('cio-webpush-sw.js runtime upgrade', () => {
     await expectWorking(s)
   })
 
-  test('installs a newer runtime with build metadata', async () => {
-    const newer = `${nextPatch(bundled)}+build.7`
-    const s = setup(tracked, { [usRuntime]: runtimeAt(newer) })
-    expect(s.self).toHaveProperty('installed', newer)
+  test.each(['+build.7', '+001.sha-5114f85'])(
+    'installs a newer runtime with build metadata %s',
+    async (build) => {
+      const newer = `${nextPatch(bundled)}${build}`
+      const s = setup(tracked, { [usRuntime]: runtimeAt(newer) })
+      expect(s.self).toHaveProperty('installed', newer)
+      expectOneHandlerSet(s)
+      await expectWorking(s)
+    }
+  )
+
+  // Committing the staged set must never leave a partial set behind.
+  test('ignores listener options from a newer runtime', async () => {
+    const s = setup(tracked, {
+      [usRuntime]: runtimeWith(
+        nextPatch(bundled),
+        `return install({ ...env, addEventListener: (type, listener) =>
+          env.addEventListener(type, listener, type === 'notificationclick'
+            ? { get capture() { throw new Error('broken listener options') } }
+            : undefined) })`
+      ),
+    })
+    expect(s.self).toHaveProperty('installed', nextPatch(bundled))
+    expect(s.warn).not.toHaveBeenCalled()
     expectOneHandlerSet(s)
     await expectWorking(s)
+    expect(s.showNotification).toHaveBeenCalledTimes(1)
+  })
+
+  test('removes committed listeners when registering the runtime fails', async () => {
+    const s = createWorker(
+      worker,
+      tracked,
+      {},
+      undefined,
+      {},
+      { [usRuntime]: runtimeAt(nextPatch(bundled)) },
+      'notificationclick'
+    )
+    expect(s.self).toHaveProperty('installed', nextPatch(bundled))
+    expect(s.warn).toHaveBeenCalledWith(
+      expect.stringContaining(`failed; using ${bundled}`),
+      expect.objectContaining({
+        message: expect.stringContaining('NotSupportedError'),
+      })
+    )
+    expectOneHandlerSet(s)
+    await expectWorking(s)
+    expect(s.showNotification).toHaveBeenCalledTimes(1)
   })
 
   test.each([2, '1'])(

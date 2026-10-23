@@ -60,7 +60,7 @@
   function parse(value) {
     const match =
       typeof value === 'string' &&
-      /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.exec(
+      /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
         value
       )
     if (!match) return
@@ -102,16 +102,17 @@
   // Installs a newer runtime. Its listeners are staged and registered only if
   // install returns having registered exactly one complete handler set; other
   // event types are allowed once each. Anything else throws, registering none.
+  // Listener options are dropped, as the bundled copy uses none.
   function installRuntime(runtime) {
     const staged = []
     let open = true
     let result
     withoutListeners(() => {
       result = runtime.install(
-        env((type, listener, options) => {
+        env((type, listener) => {
           if (!open)
             throw new Error('register listeners before install returns')
-          staged.push([type, listener, options])
+          staged.push([type, listener])
         })
       )
     })
@@ -140,8 +141,18 @@
       Promise.resolve(result).catch(() => {})
       throw new Error(`incomplete handler set: ${types.join(', ') || 'none'}`)
     }
-    for (const [type, listener, options] of staged)
-      self.addEventListener(type, listener, options)
+    const committed = []
+    try {
+      for (const [type, listener] of staged) {
+        self.addEventListener(type, listener)
+        committed.push([type, listener])
+      }
+    } catch (error) {
+      for (const [type, listener] of committed)
+        self.removeEventListener(type, listener)
+      Promise.resolve(result).catch(() => {})
+      throw error
+    }
     return result
   }
 

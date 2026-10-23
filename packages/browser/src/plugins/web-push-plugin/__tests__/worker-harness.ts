@@ -27,7 +27,9 @@ export function createWorker(
   indexedDB = new IDBFactory(),
   runtime: Record<string, unknown> = {},
   // Source served to importScripts by URL; other URLs fail as when blocked.
-  scripts: Record<string, string> = {}
+  scripts: Record<string, string> = {},
+  // Make the first native registration of this event type throw.
+  failRegistration?: string
 ) {
   const listeners: Record<string, (event: any) => void> = {}
   const registrations: [string, (event: any) => void][] = []
@@ -51,7 +53,18 @@ export function createWorker(
     importScripts,
     skipWaiting,
     location: { href: workerUrl, origin: new URL(workerUrl).origin },
-    addEventListener: (name: string, fn: (event: any) => void) => {
+    addEventListener: (
+      name: string,
+      fn: (event: any) => void,
+      options?: unknown
+    ) => {
+      // Like the native API, read the options before registering anything.
+      if (options && typeof options === 'object')
+        void (options as { capture?: unknown }).capture
+      if (name === failRegistration) {
+        failRegistration = undefined
+        throw new Error('NotSupportedError: registration failed')
+      }
       listeners[name] = fn
       registrations.push([name, fn])
     },
