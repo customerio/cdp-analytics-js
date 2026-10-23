@@ -5,9 +5,10 @@
 // This file is self-contained, and it also upgrades itself: at startup it tries
 // importScripts on the Customer.io CDN's v1 runtime (this same file, published
 // at `/v1/analytics-js/cio-webpush-sw-runtime.v1.js`) and installs that copy
-// when it is newer. A blocked, failed or older import leaves this bundled copy
-// in charge, so the worker always installs. `?runtime=<url>` loads the runtime
-// from another URL (such as a first-party proxy); `?runtime=off` never loads it.
+// when it is newer. A blocked, failed, older or incomplete runtime leaves this
+// bundled copy in charge, so the worker always installs one handler set.
+// `?runtime=<url>` loads the runtime from another URL (such as a first-party
+// proxy); `?runtime=off` never loads it.
 //
 // Importing it into your own worker with importScripts is supported only if
 // your worker supplies its own lifecycle (skipWaiting, clients.claim) and sets
@@ -29,11 +30,8 @@
 
   const params = new URL(self.location.href).searchParams
   const trackUrl = params.get('track')
-  const env = (addEventListener) => ({
-    trackUrl,
-    lifecycle: self.cioWebPushLifecycle !== false,
-    addEventListener,
-  })
+  const lifecycle = self.cioWebPushLifecycle !== false
+  const env = (addEventListener) => ({ trackUrl, lifecycle, addEventListener })
 
   function runtimeUrl() {
     const value = params.get('runtime')
@@ -57,18 +55,94 @@
     }.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js`
   }
 
-  // Compares major.minor.patch, ignoring any prerelease suffix.
+  // Strict semver; build metadata is ignored. A prerelease runtime is never
+  // installed, and a release outranks a bundled prerelease of the same version.
+  function parse(value) {
+    const match =
+      typeof value === 'string' &&
+      /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.exec(
+        value
+      )
+    if (!match) return
+    const core = match.slice(1, 4).map(Number)
+    if (core.every(Number.isSafeInteger))
+      return { core, prerelease: Boolean(match[4]) }
+  }
+
   function newer(candidate) {
-    const parse = (value) =>
-      /^(\d+)\.(\d+)\.(\d+)/.exec(typeof value === 'string' ? value : '')
     const next = parse(candidate)
     const current = parse(version)
-    if (!next || !current) return false
-    for (let i = 1; i <= 3; i++) {
-      if (Number(next[i]) !== Number(current[i]))
-        return Number(next[i]) > Number(current[i])
+    if (!next || !current || next.prerelease) return false
+    for (let i = 0; i < 3; i++) {
+      if (next.core[i] !== current.core[i])
+        return next.core[i] > current.core[i]
     }
-    return false
+    return current.prerelease
+  }
+
+  // While the runtime is evaluated and installed, self.addEventListener
+  // registers nothing: a runtime may register only through env, so a rejected
+  // runtime leaves no listeners behind. This contains a broken runtime, not a
+  // hostile one, which could still reach EventTarget.prototype.
+  function withoutListeners(run) {
+    const own = Object.getOwnPropertyDescriptor(self, 'addEventListener')
+    let added = false
+    self.addEventListener = () => {
+      added = true
+    }
+    try {
+      run()
+    } finally {
+      if (own) Object.defineProperty(self, 'addEventListener', own)
+      else delete self.addEventListener
+    }
+    if (added) throw new Error('runtime added listeners outside install(env)')
+  }
+
+  // Installs a newer runtime. Its listeners are staged and registered only if
+  // install returns having registered exactly one complete handler set; other
+  // event types are allowed once each. Anything else throws, registering none.
+  function installRuntime(runtime) {
+    const staged = []
+    let open = true
+    let result
+    withoutListeners(() => {
+      result = runtime.install(
+        env((type, listener, options) => {
+          if (!open)
+            throw new Error('register listeners before install returns')
+          staged.push([type, listener, options])
+        })
+      )
+    })
+    open = false
+    const types = staged.map(([type]) => type)
+    const expected = [
+      'sync',
+      'push',
+      'message',
+      'notificationclick',
+      'pushsubscriptionchange',
+    ]
+    const known = ['install', 'activate', ...expected]
+    if (lifecycle) expected.push('install', 'activate')
+    if (
+      new Set(types).size !== types.length ||
+      !known.every(
+        (type) => types.includes(type) === expected.includes(type)
+      ) ||
+      !staged.every(
+        ([type, listener]) =>
+          typeof type === 'string' && typeof listener === 'function'
+      )
+    ) {
+      // Keep a rejected async install from reporting an unhandled rejection.
+      Promise.resolve(result).catch(() => {})
+      throw new Error(`incomplete handler set: ${types.join(', ') || 'none'}`)
+    }
+    for (const [type, listener, options] of staged)
+      self.addEventListener(type, listener, options)
+    return result
   }
 
   // importScripts only works synchronously during this first evaluation. An
@@ -78,37 +152,35 @@
   const url = runtimeUrl()
   if (url) {
     try {
-      self.__cioWebPushImporting = true
-      delete self.__cioWebPushRuntime
-      self.importScripts(url)
-      runtime = self.__cioWebPushRuntime
+      withoutListeners(() => {
+        self.__cioWebPushImporting = true
+        delete self.__cioWebPushRuntime
+        try {
+          self.importScripts(url)
+          runtime = self.__cioWebPushRuntime
+        } finally {
+          delete self.__cioWebPushImporting
+          delete self.__cioWebPushRuntime
+        }
+      })
     } catch {
       // Blocked, offline or broken: the bundled copy below takes over.
-    } finally {
-      delete self.__cioWebPushImporting
-      delete self.__cioWebPushRuntime
+      runtime = undefined
     }
   }
-  if (
-    runtime &&
-    runtime.api === 1 &&
-    typeof runtime.install === 'function' &&
-    newer(runtime.version)
-  ) {
-    const added = []
+  if (runtime) {
+    let candidate = 'runtime'
     try {
-      return runtime.install(
-        env((type, listener) => {
-          added.push([type, listener])
-          self.addEventListener(type, listener)
-        })
+      candidate = `runtime ${String(runtime.version)}`
+      if (
+        runtime.api === 1 &&
+        typeof runtime.install === 'function' &&
+        newer(runtime.version)
       )
+        return installRuntime(runtime)
     } catch (error) {
-      // Remove a partial install so exactly one set of handlers remains.
-      for (const [type, listener] of added)
-        self.removeEventListener(type, listener)
       console.warn(
-        `Customer.io web push: runtime ${runtime.version} failed; using ${version}.`,
+        `Customer.io web push: ${candidate} failed; using ${version}.`,
         error
       )
     }

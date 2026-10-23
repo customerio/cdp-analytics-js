@@ -36,8 +36,9 @@ const push = {
 }
 
 // The CDN runtime is this same file, published at another URL. A marker
-// records whether its install ran rather than the bundled copy's.
-function runtimeAt(version: string, after = '') {
+// records whether its install ran rather than the bundled copy's. `body`
+// replaces the runtime's install, with the original as `install`.
+function runtimeWith(version: string, body: string) {
   return (
     source.replace(/const version = '[^']*'/, `const version = '${version}'`) +
     `
@@ -46,11 +47,18 @@ function runtimeAt(version: string, after = '') {
   const install = runtime.install
   runtime.install = (env) => {
     self.installed = runtime.version
-    const result = install(env)
-    ${after}
-    return result
+    ${body}
   }
 })()`
+  )
+}
+
+function runtimeAt(version: string, after = '') {
+  return runtimeWith(
+    version,
+    `const result = install(env)
+    ${after}
+    return result`
   )
 }
 
@@ -112,6 +120,11 @@ describe('cio-webpush-sw.js runtime upgrade', () => {
     ['the same', () => bundled],
     ['an older', () => '0.0.1'],
     ['a malformed', () => 'next'],
+    ['a numeric-prefixed', () => `${nextPatch(bundled)}garbage`],
+    ['a four-part', () => `${nextPatch(bundled)}.1`],
+    ['a zero-padded', () => `0${nextPatch(bundled)}`],
+    ['a space-padded', () => ` ${nextPatch(bundled)}`],
+    ['a prerelease', () => `${nextPatch(bundled)}-beta.1`],
   ])('keeps the bundled copy for %s runtime version', async (_, version) => {
     const s = setup(tracked, { [usRuntime]: runtimeAt(version()) })
     expect(s.importScripts).toHaveBeenCalledWith(usRuntime)
@@ -120,17 +133,28 @@ describe('cio-webpush-sw.js runtime upgrade', () => {
     await expectWorking(s)
   })
 
-  test('keeps the bundled copy for a runtime of another api', async () => {
-    const s = setup(tracked, {
-      [usRuntime]: runtimeAt(nextPatch(bundled), '').replace(
-        '{ api: 1, version, install }',
-        '{ api: 2, version, install }'
-      ),
-    })
-    expect(s.self).not.toHaveProperty('installed')
+  test('installs a newer runtime with build metadata', async () => {
+    const newer = `${nextPatch(bundled)}+build.7`
+    const s = setup(tracked, { [usRuntime]: runtimeAt(newer) })
+    expect(s.self).toHaveProperty('installed', newer)
     expectOneHandlerSet(s)
     await expectWorking(s)
   })
+
+  test.each([2, '1'])(
+    'keeps the bundled copy for a runtime with api %p',
+    async (api) => {
+      const s = setup(tracked, {
+        [usRuntime]: runtimeAt(nextPatch(bundled)).replace(
+          '{ api: 1, version, install }',
+          `{ api: ${JSON.stringify(api)}, version, install }`
+        ),
+      })
+      expect(s.self).not.toHaveProperty('installed')
+      expectOneHandlerSet(s)
+      await expectWorking(s)
+    }
+  )
 
   test('falls back to the bundled copy when the runtime throws during install', async () => {
     const s = setup(tracked, {
@@ -139,7 +163,7 @@ describe('cio-webpush-sw.js runtime upgrade', () => {
         "throw new Error('broken runtime')"
       ),
     })
-    // The failed runtime's listeners were added, then removed.
+    // The failed runtime's staged listeners were never registered.
     expect(s.self).toHaveProperty('installed', nextPatch(bundled))
     expect(s.warn).toHaveBeenCalledWith(
       expect.stringContaining('failed; using'),
@@ -149,6 +173,117 @@ describe('cio-webpush-sw.js runtime upgrade', () => {
     await expectWorking(s)
     expect(s.showNotification).toHaveBeenCalledTimes(1)
   })
+
+  // A broken runtime must never leave zero, partial or duplicate handlers:
+  // its listeners count only if install returns with one complete set.
+  test.each([
+    ['registers nothing', 'return Promise.resolve()', {}],
+    [
+      'registers only push',
+      `return install({ ...env, addEventListener: (type, listener) => {
+        if (type === 'push') env.addEventListener(type, listener)
+      } })`,
+      {},
+    ],
+    [
+      'registers push twice',
+      `const result = install(env)
+      env.addEventListener('push', () => {})
+      return result`,
+      {},
+    ],
+    [
+      'rejects before registering',
+      `return Promise.reject(new Error('async broken runtime'))`,
+      {},
+    ],
+    [
+      'registers after returning',
+      `return Promise.resolve().then(() => install(env))`,
+      {},
+    ],
+    [
+      'registers install and activate despite the opt-out',
+      'return install({ ...env, lifecycle: true })',
+      { cioWebPushLifecycle: false },
+    ],
+    [
+      'registers directly on self',
+      `return install({ ...env, addEventListener: (type, listener) =>
+        self.addEventListener(type, listener) })`,
+      {},
+    ],
+    [
+      'registers directly on self, then throws',
+      `install({ ...env, addEventListener: (type, listener) =>
+        self.addEventListener(type, listener) })
+      throw new Error('broken runtime')`,
+      {},
+    ],
+  ])(
+    'falls back to the bundled copy when the runtime %s',
+    async (_, body, globals: Record<string, unknown>) => {
+      const lifecycle = !('cioWebPushLifecycle' in globals)
+      const s = createWorker(
+        worker,
+        tracked,
+        globals,
+        undefined,
+        {},
+        {
+          [usRuntime]: runtimeWith(nextPatch(bundled), body),
+        }
+      )
+      expect(s.self).toHaveProperty('installed', nextPatch(bundled))
+      expect(s.warn).toHaveBeenCalledWith(
+        expect.stringContaining(`failed; using ${bundled}`),
+        expect.anything()
+      )
+      expect(s.registrations.map(([type]) => type).sort()).toEqual(
+        handlers
+          .filter(
+            (type) => lifecycle || !['install', 'activate'].includes(type)
+          )
+          .sort()
+      )
+      await expectWorking(s)
+      expect(s.showNotification).toHaveBeenCalledTimes(1)
+      // After those awaits, late registrations by the rejected runtime added nothing.
+      expect(s.registrations).toHaveLength(lifecycle ? 7 : 5)
+    }
+  )
+
+  test('falls back to the bundled copy when reading the runtime throws', async () => {
+    const s = setup(tracked, {
+      [usRuntime]: `self.__cioWebPushRuntime = {
+        api: 1,
+        get version() { throw new Error('broken getter') },
+        install() {},
+      }`,
+    })
+    expectOneHandlerSet(s)
+    await expectWorking(s)
+  })
+
+  test.each([
+    ['and throws', "throw new Error('broken runtime')"],
+    ['without throwing', ''],
+  ])(
+    'ignores listeners the runtime adds while it is evaluated, %s',
+    async (_, after) => {
+      const s = setup(tracked, {
+        [usRuntime]:
+          runtimeAt(nextPatch(bundled)) +
+          `;self.addEventListener('push', () => {});${after}`,
+      })
+      expect(s.self).not.toHaveProperty('installed')
+      expectOneHandlerSet(s)
+      await expectWorking(s)
+      expect(s.showNotification).toHaveBeenCalledTimes(1)
+      // The global addEventListener is restored after the import.
+      expect(Object.keys(s.self)).toContain('addEventListener')
+    }
+  )
 
   test('falls back to the bundled copy when the import throws', async () => {
     const s = setup(tracked, {

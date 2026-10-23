@@ -401,7 +401,12 @@ runtime on the CDN at `/v1/analytics-js/cio-webpush-sw-runtime.v1.js` with every
 release, before sites deploy a hosted copy that imports it, and serve it with
 `Cache-Control: no-cache` (or `max-age=0`): Safari otherwise installs update after
 update that still run the HTTP-cached runtime. `scripts/build-prep.sh` sets the
-worker's version, which hosted copies compare with the CDN's.
+worker's version, which hosted copies compare with the CDN's. A hosted copy accepts
+a runtime only if it reports `api: 1` and a strictly newer release version
+(prereleases are never installed), adds no listeners when evaluated, and registers
+exactly one complete handler set through `install(env)`'s `addEventListener` before
+`install` returns; otherwise none of its listeners are registered and the bundled
+copy installs.
 
 ## Other Regions
 
