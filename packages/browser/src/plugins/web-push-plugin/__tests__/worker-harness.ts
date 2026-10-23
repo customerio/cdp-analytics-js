@@ -25,9 +25,12 @@ export function createWorker(
   workerUrl = 'https://example.com/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io',
   globals: Record<string, unknown> = {},
   indexedDB = new IDBFactory(),
-  runtime: Record<string, unknown> = {}
+  runtime: Record<string, unknown> = {},
+  // Source served to importScripts by URL; other URLs fail as when blocked.
+  scripts: Record<string, string> = {}
 ) {
   const listeners: Record<string, (event: any) => void> = {}
+  const registrations: [string, (event: any) => void][] = []
   const fetch = jest.fn().mockResolvedValue({ ok: true })
   const showNotification = jest.fn().mockResolvedValue(undefined)
   const openWindow = jest.fn().mockResolvedValue(undefined)
@@ -39,12 +42,30 @@ export function createWorker(
   const skipWaiting = jest.fn().mockResolvedValue(undefined)
   const claim = jest.fn().mockResolvedValue(undefined)
   const sync = { register: jest.fn().mockResolvedValue(undefined) }
+  const importScripts = jest.fn((url: string) => {
+    if (!(url in scripts)) throw new Error('NetworkError: blocked')
+    vm.runInContext(scripts[url], context)
+  })
   const self = {
     ...globals,
+    importScripts,
     skipWaiting,
     location: { href: workerUrl, origin: new URL(workerUrl).origin },
     addEventListener: (name: string, fn: (event: any) => void) => {
       listeners[name] = fn
+      registrations.push([name, fn])
+    },
+    removeEventListener: (name: string, fn: (event: any) => void) => {
+      const index = registrations.findIndex(
+        ([type, listener]) => type === name && listener === fn
+      )
+      if (index >= 0) registrations.splice(index, 1)
+      if (listeners[name] === fn) {
+        const remaining = registrations.filter(([type]) => type === name)
+        if (remaining.length)
+          listeners[name] = remaining[remaining.length - 1][1]
+        else delete listeners[name]
+      }
     },
     registration: { showNotification, pushManager, sync },
     clients: {
@@ -99,6 +120,9 @@ export function createWorker(
     sync,
     startup,
     warn,
+    importScripts,
+    registrations,
+    self,
   }
 }
 

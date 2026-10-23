@@ -16,6 +16,9 @@ const webPushWorker = path.resolve(
   __dirname,
   'src/plugins/web-push-plugin/cio-webpush-sw.js'
 )
+// Sites host the first; the CDN serves the second, which hosted copies import
+// to upgrade themselves. They are the same file (it detects being imported).
+const webPushWorkerFiles = ['cio-webpush-sw.js', 'cio-webpush-sw-runtime.v1.js']
 
 const plugins = [
   {
@@ -26,31 +29,37 @@ const plugins = [
             name: 'WebPushWorker',
             stage: webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONAL,
           },
-          () =>
-            compilation.emitAsset(
-              '../cio-webpush-sw.js',
-              new webpack.sources.RawSource(fs.readFileSync(webPushWorker))
-            )
+          () => {
+            for (const name of webPushWorkerFiles)
+              compilation.emitAsset(
+                `../${name}`,
+                new webpack.sources.RawSource(fs.readFileSync(webPushWorker))
+              )
+          }
         )
       })
-      // The worker's tests run on its source, so the shipped copy must be
+      // The worker's tests run on its source, so the shipped copies must be
       // that source byte for byte (no minifier or other transform).
       compiler.hooks.afterEmit.tap('WebPushWorker', (compilation) => {
-        const shipped = path.resolve(
-          compilation.outputOptions.path,
-          '../cio-webpush-sw.js'
-        )
-        if (!fs.readFileSync(shipped).equals(fs.readFileSync(webPushWorker))) {
-          compilation.errors.push(
-            new webpack.WebpackError(
-              `${shipped} differs from ${webPushWorker}; it must ship unchanged`
-            )
+        for (const name of webPushWorkerFiles) {
+          const shipped = path.resolve(
+            compilation.outputOptions.path,
+            `../${name}`
           )
+          if (
+            !fs.readFileSync(shipped).equals(fs.readFileSync(webPushWorker))
+          ) {
+            compilation.errors.push(
+              new webpack.WebpackError(
+                `${shipped} differs from ${webPushWorker}; it must ship unchanged`
+              )
+            )
+          }
         }
       })
     },
   },
-  new CompressionPlugin({ exclude: /cio-webpush-sw\.js$/ }),
+  new CompressionPlugin({ exclude: /cio-webpush-sw[\w.-]*\.js$/ }),
   new webpack.EnvironmentPlugin({
     ASSET_PATH,
   }),
@@ -124,7 +133,7 @@ const config = {
     minimize: isProd,
     minimizer: [
       new TerserPlugin({
-        exclude: /cio-webpush-sw\.js$/,
+        exclude: /cio-webpush-sw[\w.-]*\.js$/,
         extractComments: false,
         terserOptions: {
           ecma: '2015',

@@ -2,19 +2,124 @@
 // Customer.io web push service worker. Register this file directly; the web
 // push plugin does, adding `?track=` for delivered and opened metrics.
 //
+// This file is self-contained, and it also upgrades itself: at startup it tries
+// importScripts on the Customer.io CDN's v1 runtime (this same file, published
+// at `/v1/analytics-js/cio-webpush-sw-runtime.v1.js`) and installs that copy
+// when it is newer. A blocked, failed or older import leaves this bundled copy
+// in charge, so the worker always installs. `?runtime=<url>` loads the runtime
+// from another URL (such as a first-party proxy); `?runtime=off` never loads it.
+//
 // Importing it into your own worker with importScripts is supported only if
 // your worker supplies its own lifecycle (skipWaiting, clients.claim) and sets
 // `self.cioWebPushLifecycle = false` before the import. An imported copy reads
-// `track` from your worker's URL. Without it, no new metrics are created;
-// previously queued reports still retry using their original tracking URL.
-;(function () {
-  const trackUrl = new URL(self.location.href).searchParams.get('track')
+// `track` and `runtime` from your worker's URL. Without `track`, no new metrics
+// are created; previously queued reports still retry using their original
+// tracking URL.
+;(function (install) {
+  // scripts/build-prep.sh keeps this equal to the package version.
+  const version = '0.7.1'
 
-  if (self.cioWebPushLifecycle !== false) {
-    self.addEventListener('install', (event) =>
-      event.waitUntil(self.skipWaiting())
-    )
-    self.addEventListener('activate', (event) =>
+  // A hosted copy is importing this file as its runtime: offer this version to
+  // it and install nothing. A breaking change to install's env needs a new
+  // runtime file (.v2.js) and api, so that older hosted copies never load it.
+  if (self.__cioWebPushImporting) {
+    self.__cioWebPushRuntime = { api: 1, version, install }
+    return
+  }
+
+  const params = new URL(self.location.href).searchParams
+  const trackUrl = params.get('track')
+  const env = (addEventListener) => ({
+    trackUrl,
+    lifecycle: self.cioWebPushLifecycle !== false,
+    addEventListener,
+  })
+
+  function runtimeUrl() {
+    const value = params.get('runtime')
+    if (value === 'off') return
+    try {
+      if (value) {
+        const url = new URL(value, self.location.href)
+        return /^https?:$/.test(url.protocol) ? url.href : undefined
+      }
+    } catch {
+      return
+    }
+    let eu = false
+    try {
+      eu = new URL(trackUrl).hostname === 'track-eu.customer.io'
+    } catch {
+      // Untracked or proxied tracking: use the US CDN.
+    }
+    return `https://cdp${
+      eu ? '-eu' : ''
+    }.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js`
+  }
+
+  // Compares major.minor.patch, ignoring any prerelease suffix.
+  function newer(candidate) {
+    const parse = (value) =>
+      /^(\d+)\.(\d+)\.(\d+)/.exec(typeof value === 'string' ? value : '')
+    const next = parse(candidate)
+    const current = parse(version)
+    if (!next || !current) return false
+    for (let i = 1; i <= 3; i++) {
+      if (Number(next[i]) !== Number(current[i]))
+        return Number(next[i]) > Number(current[i])
+    }
+    return false
+  }
+
+  // importScripts only works synchronously during this first evaluation. An
+  // installed worker reuses the copy fetched at install; browsers compare it
+  // on update checks and install a new worker version when it changes.
+  let runtime
+  const url = runtimeUrl()
+  if (url) {
+    try {
+      self.__cioWebPushImporting = true
+      delete self.__cioWebPushRuntime
+      self.importScripts(url)
+      runtime = self.__cioWebPushRuntime
+    } catch {
+      // Blocked, offline or broken: the bundled copy below takes over.
+    } finally {
+      delete self.__cioWebPushImporting
+      delete self.__cioWebPushRuntime
+    }
+  }
+  if (
+    runtime &&
+    runtime.api === 1 &&
+    typeof runtime.install === 'function' &&
+    newer(runtime.version)
+  ) {
+    const added = []
+    try {
+      return runtime.install(
+        env((type, listener) => {
+          added.push([type, listener])
+          self.addEventListener(type, listener)
+        })
+      )
+    } catch (error) {
+      // Remove a partial install so exactly one set of handlers remains.
+      for (const [type, listener] of added)
+        self.removeEventListener(type, listener)
+      console.warn(
+        `Customer.io web push: runtime ${runtime.version} failed; using ${version}.`,
+        error
+      )
+    }
+  }
+  return install(env((type, listener) => self.addEventListener(type, listener)))
+})(function install(env) {
+  const { trackUrl, addEventListener } = env
+
+  if (env.lifecycle) {
+    addEventListener('install', (event) => event.waitUntil(self.skipWaiting()))
+    addEventListener('activate', (event) =>
       event.waitUntil(self.clients.claim())
     )
   }
@@ -252,7 +357,7 @@
   // Startup may itself be a sync wakeup; do not reset that tag's retry budget.
   // Push/click enqueues schedule sync, and sync rejection requests later retries.
   const startupMetrics = retryMetrics(false)
-  self.addEventListener('sync', (event) => {
+  addEventListener('sync', (event) => {
     if (event.tag === metricSyncTag) {
       event.waitUntil(
         (async () => {
@@ -267,7 +372,7 @@
     }
   })
 
-  self.addEventListener('push', (event) => {
+  addEventListener('push', (event) => {
     event.waitUntil(Promise.all([startupMetrics, retryMetrics()]))
     event.waitUntil(
       (async () => {
@@ -419,7 +524,7 @@
   // until its message listener is ready, bounded to avoid retaining a worker for
   // destinations without the plugin. Probe also handles already-open pages.
   const pendingClicks = new Map()
-  self.addEventListener('message', (event) => {
+  addEventListener('message', (event) => {
     if (event.data?.type !== 'cio-webpush-ready') return
     const pending = pendingClicks.get(event.source?.id)
     if (!pending) return
@@ -482,7 +587,7 @@
     }
   }
 
-  self.addEventListener('notificationclick', (event) => {
+  addEventListener('notificationclick', (event) => {
     const data = event.notification.data || {}
     // Existing Customer.io notifications already retain these relay markers.
     if (!owned(data.delivery_id, data.device_id)) return
@@ -503,7 +608,7 @@
     )
   })
 
-  self.addEventListener('pushsubscriptionchange', (event) => {
+  addEventListener('pushsubscriptionchange', (event) => {
     event.waitUntil(
       (async () => {
         if (!event.newSubscription && event.oldSubscription) {
@@ -522,4 +627,4 @@
     )
   })
   return startupMetrics
-})()
+})

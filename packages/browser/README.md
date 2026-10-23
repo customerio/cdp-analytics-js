@@ -68,6 +68,12 @@ Options:
 - `trackUrl`: defaults to `https://track.customer.io`, or `https://track-eu.customer.io`
   when using the EU CDN. Set it explicitly when proxying the SDK or using the
   standalone plugin with a custom CDN.
+- `runtimeUrl`: where the worker loads its self-updating runtime (see below).
+  Defaults to `https://cdp.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js`,
+  or `cdp-eu.customer.io` when `trackUrl` is the EU host. Pass an absolute URL or a
+  root-relative path (for example `/cio/cio-webpush-sw-runtime.v1.js`) to serve it
+  first-party through your proxy, or `false` to keep the worker's bundled copy and
+  make no request (registered as `?runtime=off`).
 
 Public API on the initialized analytics instance:
 
@@ -145,6 +151,20 @@ The worker reads the metrics endpoint from its `?track=` query. When integrating
 with an existing worker, preserve this query in every host registration call;
 registering the bare URL later disables new delivered/opened metrics, but queued
 reports retain and retry their original endpoint. Rebuild/copy the push handlers when updating the SDK.
+
+The hosted worker updates itself. It bundles the complete runtime, so it works with
+no network request, and at startup it also tries `importScripts` on the Customer.io
+CDN's `cio-webpush-sw-runtime.v1.js` (the same file, published by every SDK
+release). When that copy is newer than the bundled one it runs instead, so worker
+fixes reach your site without re-copying the file. A blocked (for example by an
+ad blocker), failed, older, or broken import leaves the bundled copy in charge and
+the worker still installs. Browsers check the imported file during their regular
+service worker update checks (at least daily) and install the new version when it
+changes. Breaking changes ship as a new `.v2.js` file that existing hosted copies
+never load. If your site sets a Content Security Policy for the worker, allow
+`https://cdp.customer.io` and `https://cdp-eu.customer.io` in its `script-src`, or
+serve the runtime first-party with `runtimeUrl`. With `runtimeUrl: false`, update
+your hosted copy yourself when you update the SDK.
 
 Delivered/opened reports are saved in an IndexedDB outbox before sending. Offline
 requests and retryable HTTP failures retry on worker startup, push, notification
@@ -370,10 +390,13 @@ key or a private VAPID key. The public snippet uses `cioanalytics`; if you set
 ```
 
 `yarn browser+deps build` emits the UMD bundle in `packages/browser/dist/umd/`,
-the static worker in `packages/browser/dist/`, and npm JS/types in
+the static worker and its CDN runtime in `packages/browser/dist/`, and npm JS/types in
 `packages/browser/dist/{pkg,cjs,types}/`. The worker ships unbuilt: `yarn browser test` runs its tests on `src/plugins/web-push-plugin/cio-webpush-sw.js`, so it
-needs no build, and the webpack build fails if the `dist/cio-webpush-sw.js` it
-writes differs from that source.
+needs no build, and the webpack build fails if the `dist/cio-webpush-sw.js` or
+`dist/cio-webpush-sw-runtime.v1.js` it writes differs from that source. Publish the
+runtime on the CDN at `/v1/analytics-js/cio-webpush-sw-runtime.v1.js` with every
+release; `scripts/build-prep.sh` sets the worker's version, which hosted copies
+compare with the CDN's.
 
 ## Other Regions
 

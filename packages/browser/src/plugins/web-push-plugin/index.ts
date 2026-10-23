@@ -19,6 +19,13 @@ export interface WebPushPluginSettings {
   vapidPublicKey: string
   serviceWorkerUrl?: string
   trackUrl?: string
+  /**
+   * Where the service worker loads its self-updating runtime: an absolute URL
+   * or a root-relative path (such as a first-party proxy). Defaults to the
+   * Customer.io CDN for the track region. `false` keeps the worker's bundled
+   * copy and makes no request.
+   */
+  runtimeUrl?: string | false
   enabled?: boolean
 }
 
@@ -586,6 +593,11 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           'Web push would replace an existing service worker. Integrate push handlers into that worker or use a worker in a dedicated scope.'
         )
       url.searchParams.set('track', trackUrl)
+      if (settings.runtimeUrl !== undefined)
+        url.searchParams.set(
+          'runtime',
+          settings.runtimeUrl === false ? 'off' : settings.runtimeUrl
+        )
       const reg = await navigator.serviceWorker.register(
         url.pathname + url.search
       )

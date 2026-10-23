@@ -1,6 +1,6 @@
 import { Analytics } from '../../../core/analytics'
 import { Context } from '../../../core/context'
-import { WebPushPlugin } from '..'
+import { WebPushPlugin, WebPushPluginSettings } from '..'
 import { acceptDevice } from '../../customerio/device-delivery'
 import { deviceAttributes } from '../device-attributes'
 
@@ -10,7 +10,10 @@ const value = {
   keys: { p256dh: 'p256dh', auth: 'auth' },
 }
 
-function setup(userId: string | null = 'person') {
+function setup(
+  userId: string | null = 'person',
+  settings: Partial<WebPushPluginSettings> = {}
+) {
   let id = userId
   const listeners: Record<string, (...args: any[]) => void> = {}
   const subscription = {
@@ -65,7 +68,7 @@ function setup(userId: string | null = 'person') {
     }),
     off: jest.fn(),
   } as unknown as Analytics
-  const plugin = WebPushPlugin({ vapidPublicKey: key })
+  const plugin = WebPushPlugin({ vapidPublicKey: key, ...settings })
   const load = () => plugin.load(Context.system(), analytics)
   const identify = (nextId = 'person') => {
     id = nextId
@@ -867,6 +870,23 @@ test('allows explicit integration with the existing worker', async () => {
   ).resolves.toEqual(value)
   expect(s.sw.register).toHaveBeenCalledWith(
     '/host-worker.js?track=https%3A%2F%2Ftrack.customer.io'
+  )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each([
+  [undefined, ''],
+  [
+    '/cio/cio-webpush-sw-runtime.v1.js',
+    '&runtime=%2Fcio%2Fcio-webpush-sw-runtime.v1.js',
+  ],
+  [false, '&runtime=off'],
+] as const)('passes runtimeUrl %j to the worker', async (runtimeUrl, query) => {
+  const s = setup('person', { runtimeUrl })
+  await s.load()
+  await s.analytics.webPush!.subscribe()
+  expect(s.sw.register).toHaveBeenCalledWith(
+    `/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io${query}`
   )
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
