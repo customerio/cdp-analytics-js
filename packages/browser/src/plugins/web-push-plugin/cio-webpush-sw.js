@@ -377,6 +377,11 @@
           }
         )
         await Promise.all([
+          // Chrome checks the OS's displayed-notification list when the push
+          // finishes. On macOS it can lag showNotification's resolution and
+          // trigger Chrome's generic fallback. Allow native delivery to settle
+          // without delaying metrics or the page's received event.
+          new Promise((resolve) => setTimeout(resolve, 250)),
           metric(data, 'delivered'),
           appBadge(payload.app_badge),
           received(data, payload.title || 'Customer.io'),
