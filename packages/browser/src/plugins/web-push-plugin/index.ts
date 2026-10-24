@@ -99,6 +99,67 @@ function json(subscription: PushSubscription): WebPushSubscriptionJSON {
   return value as WebPushSubscriptionJSON
 }
 
+// The worker's runtime URL for a registration URL; mirrors runtimeUrl() in
+// cio-webpush-sw.js. undefined means the worker imports nothing.
+export function workerRuntimeUrl(worker: URL): string | undefined {
+  const value = worker.searchParams.get('runtime')
+  if (value === 'off') return
+  try {
+    if (value) {
+      const url = new URL(value, worker.href)
+      return /^https?:$/.test(url.protocol) ? url.href : undefined
+    }
+  } catch {
+    return
+  }
+  let eu = false
+  try {
+    eu =
+      new URL(worker.searchParams.get('track') as string).hostname ===
+      'track-eu.customer.io'
+  } catch {
+    // Untracked or proxied tracking: use the US CDN.
+  }
+  return `https://cdp${
+    eu ? '-eu' : ''
+  }.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js`
+}
+
+// How long the preflight waits for the runtime host to answer.
+const preflightTimeout = 3000
+// subscribe() waits this long for registration and activation.
+const activationTimeout = 30000
+
+// Resolves true when the host answers at all, whatever the status: an HTTP
+// error fails the worker's import fast and leaves its bundled copy in charge.
+// Only a host that drops or stalls the request can break installation.
+function answers(url: string): Promise<boolean> {
+  const controller =
+    typeof AbortController === 'function' ? new AbortController() : undefined
+  let timer: number | undefined
+  return Promise.race([
+    Promise.resolve()
+      .then(() =>
+        fetch(url, {
+          mode: 'no-cors',
+          cache: 'no-store',
+          credentials: 'omit',
+          signal: controller?.signal,
+        })
+      )
+      .then(
+        () => true,
+        () => false
+      ),
+    new Promise<boolean>((resolve) => {
+      timer = window.setTimeout(() => {
+        controller?.abort()
+        resolve(false)
+      }, preflightTimeout)
+    }),
+  ]).finally(() => window.clearTimeout(timer))
+}
+
 async function activated(
   registration: ServiceWorkerRegistration
 ): Promise<void> {
@@ -190,6 +251,13 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
     } catch {
       /* Persistence is optional in private browsing. */
     }
+  }
+  // One preflight per runtime URL for this page load. The outcome persists
+  // in the registration URL itself.
+  const preflights = new Map<string, Promise<boolean>>()
+  const preflight = (url: string) => {
+    if (!preflights.has(url)) preflights.set(url, answers(url))
+    return preflights.get(url)!
   }
   let mutations: Promise<unknown> = Promise.resolve()
   let selections = 0
@@ -598,10 +666,54 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           'runtime',
           settings.runtimeUrl === false ? 'off' : settings.runtimeUrl
         )
-      const reg = await navigator.serviceWorker.register(
-        url.pathname + url.search
+      // A runtime host that drops or stalls requests can make Firefox fail the
+      // install, or hang it, and delays Chromium's. So before a worker first
+      // loads a runtime URL, check that its host answers; if not, register
+      // runtime=off and the worker uses its bundled copy. An installed worker
+      // keeps its runtime query, including off, so the worker URL never churns;
+      // only a changed runtimeUrl setting is preflighted for it.
+      const installedWorker =
+        existingRegistration?.active || existingRegistration?.waiting
+      const installed =
+        installedWorker &&
+        new URL(installedWorker.scriptURL).pathname === url.pathname
+          ? new URL(installedWorker.scriptURL)
+          : undefined
+      const previous = installed ? installed.searchParams.get('runtime') : 'off'
+      const keep = () =>
+        previous === null
+          ? url.searchParams.delete('runtime')
+          : url.searchParams.set('runtime', previous)
+      const runtime = workerRuntimeUrl(url)
+      if (
+        installed &&
+        (workerRuntimeUrl(installed) === runtime ||
+          (settings.runtimeUrl === undefined && previous === 'off'))
       )
-      await activated(reg)
+        keep()
+      else if (runtime && !(await preflight(runtime))) keep()
+      let timer: number | undefined
+      const install = (async () => {
+        const registered = await navigator.serviceWorker.register(
+          url.pathname + url.search
+        )
+        await activated(registered)
+        return registered
+      })()
+      const reg = await Promise.race([
+        install,
+        new Promise<never>((_, reject) => {
+          timer = window.setTimeout(
+            () =>
+              reject(
+                new Error(
+                  'Web push service worker did not activate within 30 seconds.'
+                )
+              ),
+            activationTimeout
+          )
+        }),
+      ]).finally(() => window.clearTimeout(timer))
       // Read the destination before selecting it. The read changes nothing in
       // the browser, so a failed lookup leaves the previous path selected.
       const existing = await reg.pushManager.getSubscription()

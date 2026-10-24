@@ -2,6 +2,7 @@
 import fs from 'fs'
 import path from 'path'
 import { createWorker, worker } from './worker-harness'
+import { workerRuntimeUrl } from '..'
 
 beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(1700000000000))
 afterEach(() => jest.restoreAllMocks())
@@ -422,5 +423,24 @@ describe('cio-webpush-sw.js runtime upgrade', () => {
   test('the bundled version matches the package version', () => {
     const pkg = path.join(__dirname, '../../../../package.json')
     expect(bundled).toBe(JSON.parse(fs.readFileSync(pkg, 'utf8')).version)
+  })
+  // The plugin preflights the URL the worker will import; the two must agree.
+  test.each([
+    tracked,
+    workerUrl(''),
+    workerUrl(`track=${encodeURIComponent('https://track-eu.customer.io')}`),
+    workerUrl(`track=${encodeURIComponent('https://metrics.example.com/cio')}`),
+    workerUrl('track=not%20a%20url'),
+    `${tracked}&runtime=off`,
+    `${tracked}&runtime=`,
+    `${tracked}&runtime=${encodeURIComponent('/cio/runtime.js')}`,
+    `${tracked}&runtime=${encodeURIComponent('cio/runtime.js')}`,
+    `${tracked}&runtime=${encodeURIComponent('https://cdn.example.net/r.js')}`,
+    `${tracked}&runtime=${encodeURIComponent('javascript:alert(1)')}`,
+    `${tracked}&runtime=${encodeURIComponent('http://[')}`,
+  ])('the plugin resolves the same runtime URL as the worker for %s', (url) => {
+    const s = setup(url)
+    const imported = s.importScripts.mock.calls[0]?.[0]
+    expect(workerRuntimeUrl(new URL(url))).toBe(imported)
   })
 })

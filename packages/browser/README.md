@@ -93,6 +93,9 @@ browser subscription, but its device registration promise waits for `identify`;
 no anonymous device event is sent. If the page closes (`pagehide`) or the plugin
 is unloaded before identification, that promise rejects with an identity error.
 Catch the promise, and do not rely on unload-time asynchronous work being displayed.
+If the worker has not registered and activated within 30 seconds, `subscribe()`
+rejects with `Web push service worker did not activate within 30 seconds.`; the
+browser may still finish installing it, so calling `subscribe()` again is safe.
 Device ownership is persisted per worker path: reset deletes the device of the
 person stored for the current path, and identifying another person registers it
 for them. Unsubscribe turns off the browser subscription even when logged out;
@@ -160,8 +163,25 @@ The hosted worker updates itself. It bundles the complete runtime, so it works w
 no network request, and at startup it also tries `importScripts` on the Customer.io
 CDN's `cio-webpush-sw-runtime.v1.js` (the same file, published by every SDK
 release). When that copy is newer than the bundled one it runs instead, so worker
-fixes reach your site without re-copying the file. A blocked, failed, older, or
-broken import leaves the bundled copy in charge and the worker still installs.
+fixes reach your site without re-copying the file. A blocked, failed (any HTTP
+error), older, or broken import leaves the bundled copy in charge and the worker
+still installs. A runtime host that drops or stalls the request is different:
+Firefox fails the install, or never finishes it, once the import has waited more
+than about 40–60 seconds, and Chromium waits for the connection to time out (about 75 seconds).
+So before a browser first registers the worker, `subscribe()` checks that the
+runtime host answers (a `fetch` with a 3-second timeout; any HTTP status counts).
+If it does not, the worker is registered with `?runtime=off` and runs its bundled
+copy. An installed worker keeps its `?runtime=` query on later calls, including
+`off`, so the worker URL does not change from page to page; a changed `runtimeUrl`
+is checked the same way and applied only if its host answers. The check is made
+once per page load and never with `runtimeUrl: false`. To re-enable upgrades in
+browsers registered with `?runtime=off` (for example after a network that
+blocked `cdp.customer.io` is fixed, or after you serve the runtime first-party),
+set `runtimeUrl` explicitly: the next `subscribe()` in those browsers checks it
+and re-registers the worker with it once it answers. The page's
+`connect-src` Content Security Policy must allow the runtime host for the check
+to pass. A worker you register yourself (own `importScripts`) gets no check, so on
+networks that drop packets to the CDN serve the runtime first-party with `runtimeUrl`.
 Browsers re-check a successfully imported runtime during their service worker
 update checks and install a new worker version when it changes; a worker installed
 while the import failed keeps its bundled copy until your hosted file changes.
