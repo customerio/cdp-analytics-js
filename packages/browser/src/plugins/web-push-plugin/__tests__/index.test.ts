@@ -1,6 +1,6 @@
 import { Analytics } from '../../../core/analytics'
 import { Context } from '../../../core/context'
-import { WebPushPlugin } from '..'
+import { WebPushPlugin, WebPushPluginSettings } from '..'
 import { acceptDevice } from '../../customerio/device-delivery'
 import { deviceAttributes } from '../device-attributes'
 
@@ -10,7 +10,17 @@ const value = {
   keys: { p256dh: 'p256dh', auth: 'auth' },
 }
 
-function setup(userId: string | null = 'person') {
+// Defined once: Node 14 does not rebind a redefined global for loaded modules.
+const preflightFetch = jest.fn()
+Object.defineProperty(window, 'fetch', {
+  configurable: true,
+  value: preflightFetch,
+})
+
+function setup(
+  userId: string | null = 'person',
+  settings: Partial<WebPushPluginSettings> = {}
+) {
   let id = userId
   const listeners: Record<string, (...args: any[]) => void> = {}
   const subscription = {
@@ -45,6 +55,8 @@ function setup(userId: string | null = 'person') {
     configurable: true,
     value: sw,
   })
+  // Runtime preflight: any response means the runtime host answers.
+  const fetch = preflightFetch.mockReset().mockResolvedValue({})
   Object.defineProperty(window, 'PushManager', {
     configurable: true,
     value: function () {},
@@ -65,7 +77,7 @@ function setup(userId: string | null = 'person') {
     }),
     off: jest.fn(),
   } as unknown as Analytics
-  const plugin = WebPushPlugin({ vapidPublicKey: key })
+  const plugin = WebPushPlugin({ vapidPublicKey: key, ...settings })
   const load = () => plugin.load(Context.system(), analytics)
   const identify = (nextId = 'person') => {
     id = nextId
@@ -85,6 +97,7 @@ function setup(userId: string | null = 'person') {
     registration,
     sw,
     subscription,
+    fetch,
   }
 }
 
@@ -869,6 +882,237 @@ test('allows explicit integration with the existing worker', async () => {
     '/host-worker.js?track=https%3A%2F%2Ftrack.customer.io'
   )
   await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+test.each([
+  [undefined, ''],
+  [
+    '/cio/cio-webpush-sw-runtime.v1.js',
+    '&runtime=%2Fcio%2Fcio-webpush-sw-runtime.v1.js',
+  ],
+  [false, '&runtime=off'],
+] as const)('passes runtimeUrl %j to the worker', async (runtimeUrl, query) => {
+  const s = setup('person', { runtimeUrl })
+  await s.load()
+  await s.analytics.webPush!.subscribe()
+  expect(s.sw.register).toHaveBeenCalledWith(
+    `/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io${query}`
+  )
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
+const usRuntime =
+  'https://cdp.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js'
+const tracked = '/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io'
+// No registration for the worker yet: the first install.
+const firstInstall = (s: ReturnType<typeof setup>) =>
+  s.sw.getRegistration.mockResolvedValue(undefined)
+const installed = (s: ReturnType<typeof setup>, query: string) => {
+  s.registration.active!.scriptURL = `http://localhost${tracked}${query}`
+}
+// Fire the preflight (3 s) and activation (30 s) deadlines immediately.
+const fastDeadlines = () => {
+  const delays: (number | undefined)[] = []
+  const original = window.setTimeout
+  jest.spyOn(window, 'setTimeout').mockImplementation(((
+    callback: () => void,
+    ms?: number
+  ) => {
+    delays.push(ms)
+    return original(callback, ms === 3000 || ms === 30000 ? 0 : ms)
+  }) as typeof window.setTimeout)
+  return delays
+}
+
+describe('runtime preflight', () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  test('a first install preflights the default runtime and keeps it when the host answers', async () => {
+    const s = setup()
+    firstInstall(s)
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).toHaveBeenCalledTimes(1)
+    expect(s.fetch).toHaveBeenCalledWith(
+      usRuntime,
+      expect.objectContaining({
+        mode: 'no-cors',
+        cache: 'no-store',
+        credentials: 'omit',
+      })
+    )
+    expect(s.sw.register).toHaveBeenCalledWith(tracked)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('preflights the EU runtime for the EU track host', async () => {
+    const s = setup('person', { trackUrl: 'https://track-eu.customer.io' })
+    firstInstall(s)
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).toHaveBeenCalledWith(
+      'https://cdp-eu.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js',
+      expect.anything()
+    )
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('a first install registers runtime=off when the runtime host is blocked', async () => {
+    const s = setup()
+    firstInstall(s)
+    s.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
+    await s.load()
+    await expect(s.analytics.webPush!.subscribe()).resolves.toEqual(value)
+    expect(s.sw.register).toHaveBeenCalledWith(`${tracked}&runtime=off`)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('a first install registers runtime=off when the runtime host stalls for 3 s', async () => {
+    const s = setup()
+    firstInstall(s)
+    let signal: AbortSignal | undefined
+    s.fetch.mockImplementation((_url, init: RequestInit) => {
+      signal = init.signal ?? undefined
+      return new Promise(() => {})
+    })
+    const delays = fastDeadlines()
+    await s.load()
+    await expect(s.analytics.webPush!.subscribe()).resolves.toEqual(value)
+    expect(delays).toContain(3000)
+    expect(signal?.aborted).toBe(true)
+    expect(s.sw.register).toHaveBeenCalledWith(`${tracked}&runtime=off`)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('the preflight result is reused for the rest of the page load', async () => {
+    const s = setup()
+    firstInstall(s)
+    s.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).toHaveBeenCalledTimes(1)
+    expect(s.sw.register).toHaveBeenNthCalledWith(2, `${tracked}&runtime=off`)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test.each([
+    ['the default runtime', ''],
+    ['runtime=off', '&runtime=off'],
+  ])('an installed worker keeps %s without a preflight', async (_, query) => {
+    const s = setup()
+    installed(s, query)
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).not.toHaveBeenCalled()
+    expect(s.sw.register).toHaveBeenCalledWith(`${tracked}${query}`)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('a worker that is still installing does not count as installed', async () => {
+    const s = setup()
+    s.sw.getRegistration.mockResolvedValue({
+      ...s.registration,
+      active: null,
+      installing: {
+        state: 'installing',
+        scriptURL: `http://localhost${tracked}`,
+      },
+    })
+    s.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.sw.register).toHaveBeenCalledWith(`${tracked}&runtime=off`)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('runtimeUrl: false never preflights', async () => {
+    const s = setup('person', { runtimeUrl: false })
+    firstInstall(s)
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).not.toHaveBeenCalled()
+    expect(s.sw.register).toHaveBeenCalledWith(`${tracked}&runtime=off`)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('a first-party runtimeUrl is preflighted at its resolved URL', async () => {
+    const runtimeUrl = '/cio/cio-webpush-sw-runtime.v1.js'
+    const s = setup('person', { runtimeUrl })
+    firstInstall(s)
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).toHaveBeenCalledWith(
+      `http://localhost${runtimeUrl}`,
+      expect.anything()
+    )
+    expect(s.sw.register).toHaveBeenCalledWith(
+      `${tracked}&runtime=${encodeURIComponent(runtimeUrl)}`
+    )
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test.each([
+    [true, '&runtime=%2Fcio%2Fcio-webpush-sw-runtime.v1.js'],
+    [false, '&runtime=off'],
+  ])(
+    'an explicit runtimeUrl re-enables a runtime=off worker only when reachable (%s)',
+    async (reachable, query) => {
+      const s = setup('person', {
+        runtimeUrl: '/cio/cio-webpush-sw-runtime.v1.js',
+      })
+      installed(s, '&runtime=off')
+      if (!reachable)
+        s.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
+      await s.load()
+      await s.analytics.webPush!.subscribe()
+      expect(s.fetch).toHaveBeenCalledTimes(1)
+      expect(s.sw.register).toHaveBeenCalledWith(`${tracked}${query}`)
+      await s.plugin.unload?.(Context.system(), s.analytics)
+    }
+  )
+
+  test('a runtime query equivalent to the installed one is kept verbatim', async () => {
+    const s = setup('person', { runtimeUrl: usRuntime })
+    installed(s, '')
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).not.toHaveBeenCalled()
+    expect(s.sw.register).toHaveBeenCalledWith(tracked)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+})
+
+describe('activation deadline', () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  test.each([
+    ['register() never settles', 'register'],
+    ['the worker never activates', 'activate'],
+  ])('subscribe rejects after 30 s when %s', async (_, stall) => {
+    const s = setup()
+    const delays = fastDeadlines()
+    if (stall === 'register')
+      s.sw.register.mockReturnValue(new Promise(() => {}))
+    else
+      s.sw.register.mockResolvedValue({
+        ...s.registration,
+        active: null,
+        installing: {
+          state: 'installing',
+          addEventListener: jest.fn(),
+          removeEventListener: jest.fn(),
+        },
+      })
+    await s.load()
+    await expect(s.analytics.webPush!.subscribe()).rejects.toThrow(
+      'Web push service worker did not activate within 30 seconds.'
+    )
+    expect(delays).toContain(30000)
+    expect(s.manager.subscribe).not.toHaveBeenCalled()
+    expect(s.analytics.track).not.toHaveBeenCalled()
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
 })
 
 test('a failed worker path change preserves the live subscription lookup', async () => {

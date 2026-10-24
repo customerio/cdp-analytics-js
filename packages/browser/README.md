@@ -64,10 +64,19 @@ Options:
   import it into your own service worker with `importScripts` instead, your worker
   owns its lifecycle: set `self.cioWebPushLifecycle = false` before the import so
   the file skips `skipWaiting()`/`clients.claim()`, and register your worker with
-  the same `?track=` query so delivered and opened events still reach Customer.io.
+  the same `?track=` query so delivered and opened events still reach Customer.io
+  (and the same `?runtime=` query if you set `runtimeUrl`).
 - `trackUrl`: defaults to `https://track.customer.io`, or `https://track-eu.customer.io`
   when using the EU CDN. Set it explicitly when proxying the SDK or using the
   standalone plugin with a custom CDN.
+- `runtimeUrl`: where the worker loads its self-updating runtime (see below).
+  Defaults to `https://cdp.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js`,
+  or `cdp-eu.customer.io` when `trackUrl` is the EU host. Pass an absolute URL or a
+  root-relative path (for example `/cio/cio-webpush-sw-runtime.v1.js`) to serve it
+  first-party through your proxy, or `false` to keep the worker's bundled copy and
+  make no request (registered as `?runtime=off`). EU sites that proxy `trackUrl`
+  get the US CDN by default; set `runtimeUrl` to the `cdp-eu.customer.io` URL or
+  your own proxy.
 
 Public API on the initialized analytics instance:
 
@@ -84,6 +93,9 @@ browser subscription, but its device registration promise waits for `identify`;
 no anonymous device event is sent. If the page closes (`pagehide`) or the plugin
 is unloaded before identification, that promise rejects with an identity error.
 Catch the promise, and do not rely on unload-time asynchronous work being displayed.
+If the worker has not registered and activated within 30 seconds, `subscribe()`
+rejects with `Web push service worker did not activate within 30 seconds.`; the
+browser may still finish installing it, so calling `subscribe()` again is safe.
 Device ownership is persisted per worker path: reset deletes the device of the
 person stored for the current path, and identifying another person registers it
 for them. Unsubscribe turns off the browser subscription even when logged out;
@@ -141,10 +153,45 @@ classic script, so if your existing worker is a module service worker
 scope instead. The ordinary notification permission
 request still happens from your user action.
 
-The worker reads the metrics endpoint from its `?track=` query. When integrating
-with an existing worker, preserve this query in every host registration call;
+The worker reads the metrics endpoint from its `?track=` query, and the runtime
+location from `?runtime=` when you set `runtimeUrl`. When integrating with an
+existing worker, preserve both in every host registration call;
 registering the bare URL later disables new delivered/opened metrics, but queued
 reports retain and retry their original endpoint. Rebuild/copy the push handlers when updating the SDK.
+
+The hosted worker updates itself. It bundles the complete runtime, so it works with
+no network request, and at startup it also tries `importScripts` on the Customer.io
+CDN's `cio-webpush-sw-runtime.v1.js` (the same file, published by every SDK
+release). When that copy is newer than the bundled one it runs instead, so worker
+fixes reach your site without re-copying the file. A blocked, failed (any HTTP
+error), older, or broken import leaves the bundled copy in charge and the worker
+still installs. A runtime host that drops or stalls the request is different:
+Firefox fails the install, or never finishes it, once the import has waited more
+than about 40–60 seconds, and Chromium waits for the connection to time out (about 75 seconds).
+So before a browser first registers the worker, `subscribe()` checks that the
+runtime host answers (a `fetch` with a 3-second timeout; any HTTP status counts).
+If it does not, the worker is registered with `?runtime=off` and runs its bundled
+copy. An installed worker keeps its `?runtime=` query on later calls, including
+`off`, so the worker URL does not change from page to page; a changed `runtimeUrl`
+is checked the same way and applied only if its host answers. The check is made
+once per page load and never with `runtimeUrl: false`. To re-enable upgrades in
+browsers registered with `?runtime=off` (for example after a network that
+blocked `cdp.customer.io` is fixed, or after you serve the runtime first-party),
+set `runtimeUrl` explicitly: the next `subscribe()` in those browsers checks it
+and re-registers the worker with it once it answers. The page's
+`connect-src` Content Security Policy must allow the runtime host for the check
+to pass. A worker you register yourself (own `importScripts`) gets no check, so on
+networks that drop packets to the CDN serve the runtime first-party with `runtimeUrl`.
+Browsers re-check a successfully imported runtime during their service worker
+update checks and install a new worker version when it changes; a worker installed
+while the import failed keeps its bundled copy until your hosted file changes.
+Ad blockers' default lists (for example EasyPrivacy in uBlock Origin) block
+`cdp.customer.io` on other sites, so to upgrade those browsers too, serve the runtime
+first-party with `runtimeUrl`. Breaking changes ship as a new `.v2.js` file that
+existing hosted copies never load. If your site sets a Content Security Policy for
+the worker, allow `https://cdp.customer.io` and `https://cdp-eu.customer.io` in its
+`script-src`, or use `runtimeUrl`. With `runtimeUrl: false`, update your hosted copy
+yourself when you update the SDK.
 
 Delivered/opened reports are saved in an IndexedDB outbox before sending. Offline
 requests and retryable HTTP failures retry on worker startup, push, notification
@@ -370,10 +417,21 @@ key or a private VAPID key. The public snippet uses `cioanalytics`; if you set
 ```
 
 `yarn browser+deps build` emits the UMD bundle in `packages/browser/dist/umd/`,
-the static worker in `packages/browser/dist/`, and npm JS/types in
+the static worker and its CDN runtime in `packages/browser/dist/`, and npm JS/types in
 `packages/browser/dist/{pkg,cjs,types}/`. The worker ships unbuilt: `yarn browser test` runs its tests on `src/plugins/web-push-plugin/cio-webpush-sw.js`, so it
-needs no build, and the webpack build fails if the `dist/cio-webpush-sw.js` it
-writes differs from that source.
+needs no build, and the webpack build fails if the `dist/cio-webpush-sw.js` or
+`dist/cio-webpush-sw-runtime.v1.js` it writes differs from that source. Publish the
+runtime on the CDN at `/v1/analytics-js/cio-webpush-sw-runtime.v1.js` with every
+release, before sites deploy a hosted copy that imports it, and serve it with
+`Cache-Control: no-cache` (or `max-age=0`): Safari otherwise installs update after
+update that still run the HTTP-cached runtime. `scripts/build-prep.sh` sets the
+worker's version, which hosted copies compare with the CDN's. A hosted copy accepts
+a runtime only if it reports `api: 1` and a strictly newer release version (a valid
+semver string; prereleases are never installed and build metadata is ignored), adds
+no listeners when evaluated, and registers exactly one complete handler set through
+`install(env)`'s `addEventListener` before `install` returns; otherwise none of its
+listeners are registered and the bundled copy installs. Listener options are
+ignored.
 
 ## Other Regions
 
