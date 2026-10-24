@@ -10,6 +10,13 @@ const value = {
   keys: { p256dh: 'p256dh', auth: 'auth' },
 }
 
+// Defined once: Node 14 does not rebind a redefined global for loaded modules.
+const preflightFetch = jest.fn()
+Object.defineProperty(window, 'fetch', {
+  configurable: true,
+  value: preflightFetch,
+})
+
 function setup(
   userId: string | null = 'person',
   settings: Partial<WebPushPluginSettings> = {}
@@ -49,8 +56,7 @@ function setup(
     value: sw,
   })
   // Runtime preflight: any response means the runtime host answers.
-  const fetch = jest.fn().mockResolvedValue({})
-  Object.defineProperty(window, 'fetch', { configurable: true, value: fetch })
+  const fetch = preflightFetch.mockReset().mockResolvedValue({})
   Object.defineProperty(window, 'PushManager', {
     configurable: true,
     value: function () {},
