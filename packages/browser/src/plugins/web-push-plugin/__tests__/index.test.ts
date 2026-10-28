@@ -715,6 +715,31 @@ test('rotates a known different key before subscribing', async () => {
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
+test('concurrent subscribe calls share one run during key rotation', async () => {
+  const s = setup()
+  s.manager.getSubscription.mockResolvedValue({
+    ...s.subscription,
+    options: {
+      applicationServerKey: Uint8Array.from([4, ...Array(64).fill(98)]).buffer,
+    },
+  })
+  await s.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  // A second browser unsubscribe of the same subscription would report false.
+  s.subscription.unsubscribe
+    .mockResolvedValueOnce(true)
+    .mockResolvedValue(false)
+
+  const results = await Promise.allSettled(
+    [1, 2, 3, 4, 5].map(() => s.analytics.webPush!.subscribe())
+  )
+
+  expect(results.map((r) => r.status)).toEqual(Array(5).fill('fulfilled'))
+  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
+  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  await s.plugin.unload?.(Context.system(), s.analytics)
+})
+
 test('reuses a subscription with the requested exposed key', async () => {
   const s = setup()
   s.manager.getSubscription.mockResolvedValue({
