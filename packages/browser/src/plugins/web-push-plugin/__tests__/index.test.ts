@@ -740,6 +740,72 @@ test('concurrent subscribe calls share one run during key rotation', async () =>
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
+describe('subscribe and unsubscribe during key rotation', () => {
+  // Stateful PushManager: a subscription can be unsubscribed once, and the
+  // paused first unsubscribe lets a second caller see the old subscription.
+  const rotating = async () => {
+    const s = setup()
+    let live: any = {
+      ...s.subscription,
+      options: {
+        applicationServerKey: Uint8Array.from([4, ...Array(64).fill(98)])
+          .buffer,
+      },
+    }
+    let release!: () => void
+    const paused = new Promise<void>((resolve) => (release = resolve))
+    const old = live
+    old.unsubscribe = jest.fn(async () => {
+      await paused
+      if (live !== old) return false
+      live = null
+      return true
+    })
+    s.manager.getSubscription.mockImplementation(async () => live)
+    s.manager.subscribe.mockImplementation(async () => {
+      live = {
+        ...s.subscription,
+        unsubscribe: jest.fn(async () => {
+          live = null
+          return true
+        }),
+      }
+      return live
+    })
+    await s.load()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    return { s, release, current: () => live }
+  }
+
+  test('unsubscribe called during a rotating subscribe settles after it', async () => {
+    const { s, release, current } = await rotating()
+    const sub = s.analytics.webPush!.subscribe()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const unsub = s.analytics.webPush!.unsubscribe()
+    release()
+
+    const results = await Promise.allSettled([sub, unsub])
+
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled'])
+    expect(current()).toBeNull()
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('subscribe called during an unsubscribe waits for it', async () => {
+    const { s, release, current } = await rotating()
+    const unsub = s.analytics.webPush!.unsubscribe()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const sub = s.analytics.webPush!.subscribe()
+    release()
+
+    const results = await Promise.allSettled([unsub, sub])
+
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled'])
+    expect(current()).not.toBeNull()
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+})
+
 test('reuses a subscription with the requested exposed key', async () => {
   const s = setup()
   s.manager.getSubscription.mockResolvedValue({

@@ -617,6 +617,8 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       window.dispatchEvent(new CustomEvent('cio:webpush:received', { detail }))
     }
   }
+  // Releases the browser-mutation gate of the subscribe run in progress.
+  let releaseBrowserGate = () => {}
   const api: WebPushAPI = {
     onClick: (callback) => {
       clickListeners.add(callback)
@@ -804,6 +806,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         await rotate(existing)
         subscription = await reg.pushManager.subscribe(options)
       }
+      // Registration may wait indefinitely for an identity; browser
+      // mutations are done, so queued unsubscribes may proceed.
+      releaseBrowserGate()
       return registerDevice(subscription)
     },
     unsubscribe: async () => {
@@ -831,26 +836,60 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       }
     },
   }
-  // Concurrent calls with the same options share one in-flight run, so a
-  // double click during a key rotation does not race the unsubscribe. Calls
-  // with different options wait for the earlier run to settle.
+  // Concurrent subscribe calls with the same options share one in-flight run,
+  // so a double click during a key rotation does not race the unsubscribe.
+  // Different options, and unsubscribe, wait for earlier browser mutations to
+  // settle. An unsubscribe does not wait for a subscribe's identity wait.
   const subscribeOnce = api.subscribe
-  let subscribing: { key: string; promise: Promise<unknown> } | undefined
+  const unsubscribeOnce = api.unsubscribe
+  type Run = {
+    key: string
+    promise: Promise<unknown>
+    gate: Promise<unknown>
+    open: boolean
+  }
+  let subscribing: Run | undefined
+  let unsubscribing: Promise<unknown> | undefined
+  const settled = (p?: Promise<unknown>) => p?.catch(() => {})
   api.subscribe = (opts) => {
     const key = JSON.stringify(opts ?? {})
-    if (subscribing?.key === key)
+    if (subscribing?.open && subscribing.key === key)
       return subscribing.promise as ReturnType<typeof subscribeOnce>
+    const waits = [
+      settled(subscribing?.promise),
+      settled(unsubscribing),
+    ].filter(Boolean)
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const run = () => {
+      releaseBrowserGate = release
+      return subscribeOnce(opts)
+    }
     // With nothing in flight, start synchronously: the permission prompt must
     // begin inside the user gesture.
-    const promise = subscribing
-      ? subscribing.promise.catch(() => {}).then(() => subscribeOnce(opts))
-      : subscribeOnce(opts)
-    const entry = { key, promise }
+    const promise = waits.length ? Promise.all(waits).then(run) : run()
+    const entry: Run = { key, promise, gate, open: true }
     subscribing = entry
-    const clear = () => {
+    const done = () => {
+      release()
       if (subscribing === entry) subscribing = undefined
     }
-    promise.then(clear, clear)
+    promise.then(done, done)
+    return promise
+  }
+  api.unsubscribe = () => {
+    if (subscribing) subscribing.open = false
+    const waits = [settled(subscribing?.gate), settled(unsubscribing)].filter(
+      Boolean
+    )
+    const promise = waits.length
+      ? Promise.all(waits).then(() => unsubscribeOnce())
+      : unsubscribeOnce()
+    unsubscribing = promise
+    const done = () => {
+      if (unsubscribing === promise) unsubscribing = undefined
+    }
+    promise.then(done, done)
     return promise
   }
   return {
