@@ -617,8 +617,6 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       window.dispatchEvent(new CustomEvent('cio:webpush:received', { detail }))
     }
   }
-  // Releases the browser-mutation gate of the subscribe run in progress.
-  let releaseBrowserGate = () => {}
   const api: WebPushAPI = {
     onClick: (callback) => {
       clickListeners.add(callback)
@@ -628,7 +626,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       supported()
       return Notification.requestPermission()
     },
-    subscribe: async (opts = {}) => {
+    subscribe: async (opts = {}, browserDone: () => void = () => {}) => {
       supported()
       const publicKey = opts.vapidPublicKey ?? settings.vapidPublicKey
       if (!publicKey) throw new Error('Web push requires a vapidPublicKey.')
@@ -772,8 +770,12 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         if (analytics.user().id()) background(reconcile())
       }
       const rotate = async (current: PushSubscription) => {
-        if (!(await current.unsubscribe()))
-          throw new Error('Browser unsubscribe failed.')
+        if (!(await current.unsubscribe())) {
+          // A concurrent subscribe (a double click) may have rotated it first.
+          const now = await reg.pushManager.getSubscription()
+          if (now?.endpoint === current.endpoint)
+            throw new Error('Browser unsubscribe failed.')
+        }
         await mutate(async () => {
           const previous = stored() ?? {
             endpoint: current.endpoint,
@@ -808,7 +810,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       }
       // Registration may wait indefinitely for an identity; browser
       // mutations are done, so queued unsubscribes may proceed.
-      releaseBrowserGate()
+      browserDone()
       return registerDevice(subscription)
     },
     unsubscribe: async () => {
@@ -836,54 +838,39 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       }
     },
   }
-  // Concurrent subscribe calls with the same options share one in-flight run,
-  // so a double click during a key rotation does not race the unsubscribe.
-  // Different options, and unsubscribe, wait for earlier browser mutations to
-  // settle. An unsubscribe does not wait for a subscribe's identity wait.
-  const subscribeOnce = api.subscribe
+  // unsubscribe waits for the browser phase of every earlier subscribe, and a
+  // subscribe waits for an in-flight unsubscribe. The browser phase ends before
+  // the device registration, which may wait indefinitely for an identity, so
+  // that wait never blocks unsubscribe. Subscribes stay independent of each
+  // other: a stale one may hang in the browser while a newer one completes.
+  const subscribeOnce = api.subscribe as (
+    opts?: Parameters<WebPushAPI['subscribe']>[0],
+    browserDone?: () => void
+  ) => Promise<WebPushSubscriptionJSON>
   const unsubscribeOnce = api.unsubscribe
-  type Run = {
-    key: string
-    promise: Promise<unknown>
-    gate: Promise<unknown>
-    open: boolean
-  }
-  let subscribing: Run | undefined
+  const browserPhases = new Set<Promise<unknown>>()
   let unsubscribing: Promise<unknown> | undefined
   const settled = (p?: Promise<unknown>) => p?.catch(() => {})
   api.subscribe = (opts) => {
-    const key = JSON.stringify(opts ?? {})
-    if (subscribing?.open && subscribing.key === key)
-      return subscribing.promise as ReturnType<typeof subscribeOnce>
-    const waits = [
-      settled(subscribing?.promise),
-      settled(unsubscribing),
-    ].filter(Boolean)
     let release = () => {}
-    const gate = new Promise<void>((resolve) => (release = resolve))
-    const run = () => {
-      releaseBrowserGate = release
-      return subscribeOnce(opts)
-    }
+    const phase = new Promise<void>((resolve) => (release = resolve))
+    browserPhases.add(phase)
+    void phase.then(() => browserPhases.delete(phase))
     // With nothing in flight, start synchronously: the permission prompt must
     // begin inside the user gesture.
-    const promise = waits.length ? Promise.all(waits).then(run) : run()
-    const entry: Run = { key, promise, gate, open: true }
-    subscribing = entry
-    const done = () => {
-      release()
-      if (subscribing === entry) subscribing = undefined
-    }
-    promise.then(done, done)
+    const promise = unsubscribing
+      ? settled(unsubscribing)!.then(() => subscribeOnce(opts, release))
+      : subscribeOnce(opts, release)
+    // A run that fails before the browser phase ends must not hold the gate.
+    promise.then(release, release)
     return promise
   }
   api.unsubscribe = () => {
-    if (subscribing) subscribing.open = false
-    const waits = [settled(subscribing?.gate), settled(unsubscribing)].filter(
-      Boolean
-    )
+    const waits = Array.from(browserPhases)
+      .concat(unsubscribing ?? [])
+      .filter(Boolean)
     const promise = waits.length
-      ? Promise.all(waits).then(() => unsubscribeOnce())
+      ? Promise.all(waits.map(settled)).then(() => unsubscribeOnce())
       : unsubscribeOnce()
     unsubscribing = promise
     const done = () => {

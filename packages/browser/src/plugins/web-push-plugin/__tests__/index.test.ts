@@ -715,28 +715,35 @@ test('rotates a known different key before subscribing', async () => {
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
-test('concurrent subscribe calls share one run during key rotation', async () => {
+test('concurrent subscribe calls all succeed during key rotation', async () => {
   const s = setup()
-  s.manager.getSubscription.mockResolvedValue({
+  // Stateful PushManager: a subscription can be unsubscribed only once.
+  let live: any = {
     ...s.subscription,
     options: {
       applicationServerKey: Uint8Array.from([4, ...Array(64).fill(98)]).buffer,
     },
+  }
+  const old = live
+  old.unsubscribe = jest.fn(async () => {
+    if (live !== old) return false
+    live = null
+    return true
+  })
+  s.manager.getSubscription.mockImplementation(async () => live)
+  s.manager.subscribe.mockImplementation(async () => {
+    live ??= { ...s.subscription, unsubscribe: jest.fn(async () => true) }
+    return live
   })
   await s.load()
   await new Promise((resolve) => setTimeout(resolve, 0))
-  // A second browser unsubscribe of the same subscription would report false.
-  s.subscription.unsubscribe
-    .mockResolvedValueOnce(true)
-    .mockResolvedValue(false)
 
   const results = await Promise.allSettled(
     [1, 2, 3, 4, 5].map(() => s.analytics.webPush!.subscribe())
   )
 
   expect(results.map((r) => r.status)).toEqual(Array(5).fill('fulfilled'))
-  expect(s.subscription.unsubscribe).toHaveBeenCalledTimes(1)
-  expect(s.manager.subscribe).toHaveBeenCalledTimes(1)
+  expect(live).not.toBe(old)
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
@@ -789,6 +796,53 @@ describe('subscribe and unsubscribe during key rotation', () => {
     expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled'])
     expect(current()).toBeNull()
     await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('anonymous subscribe, switch and unsubscribe leaves no browser subscription', async () => {
+    const s = setup(null)
+    let live: any = null
+    s.manager.getSubscription.mockImplementation(async () => live)
+    s.manager.subscribe.mockImplementation(async () => {
+      live = {
+        ...s.subscription,
+        unsubscribe: jest.fn(async () => {
+          live = null
+          return true
+        }),
+      }
+      return live
+    })
+    // Each worker path has its own activated registration over one manager.
+    const registrationFor = (url: string) => ({
+      ...s.registration,
+      active: {
+        state: 'activated',
+        scriptURL: new URL(url, location.href).href,
+      },
+    })
+    s.sw.getRegistration.mockImplementation(async (url: string) =>
+      registrationFor(url)
+    )
+    s.sw.register.mockImplementation(async (url: string) =>
+      registrationFor(url)
+    )
+    await s.load()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const first = s.analytics.webPush!.subscribe()
+    const second = s.analytics.webPush!.subscribe({
+      serviceWorkerUrl: '/other/cio-webpush-sw.js',
+    })
+    const unsub = s.analytics.webPush!.unsubscribe()
+    // Registration waits for identify() forever; unsubscribe must not.
+    const outcome = await Promise.race([
+      unsub.then(() => 'done'),
+      new Promise((resolve) => setTimeout(() => resolve('blocked'), 200)),
+    ])
+
+    expect(outcome).toBe('done')
+    expect(live).toBeNull()
+    await s.plugin.unload?.(Context.system(), s.analytics)
+    await Promise.allSettled([first, second])
   })
 
   test('subscribe called during an unsubscribe waits for it', async () => {
