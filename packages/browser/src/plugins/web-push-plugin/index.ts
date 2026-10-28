@@ -626,7 +626,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
       supported()
       return Notification.requestPermission()
     },
-    subscribe: async (opts = {}) => {
+    subscribe: async (opts = {}, browserDone: () => void = () => {}) => {
       supported()
       const publicKey = opts.vapidPublicKey ?? settings.vapidPublicKey
       if (!publicKey) throw new Error('Web push requires a vapidPublicKey.')
@@ -770,8 +770,12 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         if (analytics.user().id()) background(reconcile())
       }
       const rotate = async (current: PushSubscription) => {
-        if (!(await current.unsubscribe()))
-          throw new Error('Browser unsubscribe failed.')
+        if (!(await current.unsubscribe())) {
+          // A concurrent subscribe (a double click) may have rotated it first.
+          const now = await reg.pushManager.getSubscription()
+          if (now?.endpoint === current.endpoint)
+            throw new Error('Browser unsubscribe failed.')
+        }
         await mutate(async () => {
           const previous = stored() ?? {
             endpoint: current.endpoint,
@@ -804,6 +808,9 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         await rotate(existing)
         subscription = await reg.pushManager.subscribe(options)
       }
+      // Registration may wait indefinitely for an identity; browser
+      // mutations are done, so queued unsubscribes may proceed.
+      browserDone()
       return registerDevice(subscription)
     },
     unsubscribe: async () => {
@@ -830,6 +837,47 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
         return null
       }
     },
+  }
+  // unsubscribe waits for the browser phase of every earlier subscribe, and a
+  // subscribe waits for an in-flight unsubscribe. The browser phase ends before
+  // the device registration, which may wait indefinitely for an identity, so
+  // that wait never blocks unsubscribe. Subscribes stay independent of each
+  // other: a stale one may hang in the browser while a newer one completes.
+  const subscribeOnce = api.subscribe as (
+    opts?: Parameters<WebPushAPI['subscribe']>[0],
+    browserDone?: () => void
+  ) => Promise<WebPushSubscriptionJSON>
+  const unsubscribeOnce = api.unsubscribe
+  const browserPhases = new Set<Promise<unknown>>()
+  let unsubscribing: Promise<unknown> | undefined
+  const settled = (p?: Promise<unknown>) => p?.catch(() => {})
+  api.subscribe = (opts) => {
+    let release = () => {}
+    const phase = new Promise<void>((resolve) => (release = resolve))
+    browserPhases.add(phase)
+    void phase.then(() => browserPhases.delete(phase))
+    // With nothing in flight, start synchronously: the permission prompt must
+    // begin inside the user gesture.
+    const promise = unsubscribing
+      ? settled(unsubscribing)!.then(() => subscribeOnce(opts, release))
+      : subscribeOnce(opts, release)
+    // A run that fails before the browser phase ends must not hold the gate.
+    promise.then(release, release)
+    return promise
+  }
+  api.unsubscribe = () => {
+    const waits = Array.from(browserPhases)
+      .concat(unsubscribing ?? [])
+      .filter(Boolean)
+    const promise = waits.length
+      ? Promise.all(waits.map(settled)).then(() => unsubscribeOnce())
+      : unsubscribeOnce()
+    unsubscribing = promise
+    const done = () => {
+      if (unsubscribing === promise) unsubscribing = undefined
+    }
+    promise.then(done, done)
+    return promise
   }
   return {
     name: 'Customer.io Web Push Plugin',
