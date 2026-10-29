@@ -1,6 +1,7 @@
 # Code that decides what gets published and what runs on customer sites with the most reach (SEC-1452).
-/.github/                                      @customerio/squad-pipelines @customerio/squad-security
-/.yarn/                                        @customerio/squad-pipelines @customerio/squad-security
-/.yarnrc.yml                                   @customerio/squad-pipelines @customerio/squad-security
-/packages/browser/scripts/                     @customerio/squad-pipelines @customerio/squad-security
-/packages/browser/src/plugins/web-push-plugin/ @customerio/squad-pipelines @customerio/squad-security
+# SecEng only: any one listed owner can approve, so a second team here would make SecEng optional.
+/.github/                                      @customerio/squad-security
+/.yarn/                                        @customerio/squad-security
+/.yarnrc.yml                                   @customerio/squad-security
+/packages/browser/scripts/                     @customerio/squad-security
+/packages/browser/src/plugins/web-push-plugin/ @customerio/squad-security
