@@ -30,12 +30,12 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Setup node.js for NPM
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: 'yarn'
@@ -43,7 +43,7 @@ jobs:
           scope: '@customerio'
 
       - name: Install npm 11.5.1+ for OIDC support
-        run: npm install -g npm@11
+        run: npm install -g npm@11.21.1
 
       - name: Install
         run: |
@@ -96,12 +96,12 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Setup node.js for GitHub
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: 'yarn'
@@ -109,7 +109,7 @@ jobs:
           scope: '@customerio'
 
       - name: Install npm 11.5.1+ for OIDC support
-        run: npm install -g npm@11
+        run: npm install -g npm@11.21.1
 
       - name: Install
         run: |
@@ -166,7 +166,7 @@ jobs:
     needs: [npm, github]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 

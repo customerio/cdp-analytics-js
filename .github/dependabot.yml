@@ -5,3 +5,8 @@ updates:
     schedule:
       interval: "monthly"
     versioning-strategy: increase
+  # Keeps the SHA-pinned actions current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
