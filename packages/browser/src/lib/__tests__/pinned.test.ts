@@ -241,11 +241,25 @@ describe('withoutSettingsRuntimeUrl (web push)', () => {
     )
   })
 
-  it('drops a settings runtimeUrl when pinned, keeps the customer option', () => {
+  it('turns the live runtime off when pinned, keeps the customer option', () => {
     setPinnedMode(detectPinnedMode(`${base}analytics.min.js`))
     expect(withoutSettingsRuntimeUrl(fromSettings, undefined)).toEqual({
       vapidPublicKey: 'k',
+      runtimeUrl: false,
     })
+    const noRuntime: { vapidPublicKey: string; runtimeUrl?: string | false } = {
+      vapidPublicKey: 'k',
+    }
+    expect(withoutSettingsRuntimeUrl(noRuntime, undefined)).toEqual({
+      vapidPublicKey: 'k',
+      runtimeUrl: false,
+    })
+    expect(
+      withoutSettingsRuntimeUrl(
+        { vapidPublicKey: 'k', runtimeUrl: '/rt.js' },
+        { runtimeUrl: '/rt.js' }
+      )
+    ).toEqual({ vapidPublicKey: 'k', runtimeUrl: '/rt.js' })
     const merged = { vapidPublicKey: 'k', runtimeUrl: false as const }
     expect(withoutSettingsRuntimeUrl(merged, { runtimeUrl: false })).toBe(
       merged

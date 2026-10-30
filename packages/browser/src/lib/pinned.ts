@@ -188,17 +188,19 @@ export function chunkIntegrity(url: string): string | undefined {
 /**
  * Pinned mode honours a web push `runtimeUrl` (code the service worker
  * imports) only from the customer's own load options, never from settings.
+ * Without one, the worker keeps its bundled copy (`runtimeUrl: false`): the
+ * default runtime is live, unpinned code on our CDN, and a service worker
+ * would run it on the customer's origin.
  */
 export function withoutSettingsRuntimeUrl<T extends { runtimeUrl?: unknown }>(
   merged: T | undefined,
   fromOptions: unknown
 ): T | undefined {
-  if (!active || !merged || merged.runtimeUrl === undefined) return merged
+  if (!active || !merged) return merged
   const optionRuntimeUrl =
     fromOptions && typeof fromOptions === 'object'
       ? (fromOptions as { runtimeUrl?: unknown }).runtimeUrl
       : undefined
   if (optionRuntimeUrl !== undefined) return merged
-  const { runtimeUrl: _ignored, ...rest } = merged
-  return rest as T
+  return { ...merged, runtimeUrl: false }
 }
