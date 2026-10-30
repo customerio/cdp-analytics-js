@@ -30,6 +30,7 @@ import { InAppPluginSettings } from '../plugins/in-app-plugin'
 import { setGlobalAnalyticsKey } from '../lib/global-analytics-helper'
 import { hasQueryString } from '../core/query-string'
 import { isSecretKey, SECRET_KEY_ERROR } from '../lib/secret-key'
+import { withoutSettingsRuntimeUrl } from '../lib/pinned'
 
 export interface LegacyIntegrationConfiguration {
   /* @deprecated - This does not indicate browser types anymore */
@@ -227,13 +228,15 @@ async function registerPlugins(
         })
       : undefined
 
-  const webPushSettings =
+  const webPushSettings = withoutSettingsRuntimeUrl(
     (mergedSettings['Customer.io Web Push Plugin'] as unknown as
       | import('../plugins/web-push-plugin').WebPushPluginSettings
       | undefined) ??
-    (options.integrations?.['Customer.io Web Push Plugin'] as
-      | import('../plugins/web-push-plugin').WebPushPluginSettings
-      | undefined)
+      (options.integrations?.['Customer.io Web Push Plugin'] as
+        | import('../plugins/web-push-plugin').WebPushPluginSettings
+        | undefined),
+    options.integrations?.['Customer.io Web Push Plugin']
+  )
   const webPushPlugin =
     webPushSettings && webPushSettings.enabled !== false
       ? await import(
