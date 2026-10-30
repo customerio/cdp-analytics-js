@@ -201,7 +201,7 @@ jobs:
           git commit -am "Update version"
           git show
 
-      - name: Open and merge version bump PR
+      - name: Open version bump PR and queue it to merge on approval
         if: ${{ github.event.inputs.dry-run == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -218,18 +218,20 @@ jobs:
             --body "Version bump from [release run ${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).")
           echo "Opened $pr_url"
 
-          merge_once_github_finishes_computing_mergeability() {
+          # main needs an approval (SEC-1452), so the PR merges itself once
+          # someone other than this workflow approves it.
+          queue_once_github_finishes_computing_mergeability() {
             for attempt in $(seq 6); do
-              gh pr merge "$branch" --squash && return 0
-              echo "Not mergeable yet (attempt $attempt), waiting 10s"
+              gh pr merge "$branch" --auto --squash && return 0
+              echo "Not ready to queue yet (attempt $attempt), waiting 10s"
               sleep 10
             done
             return 1
           }
 
-          if merge_once_github_finishes_computing_mergeability; then
-            echo "Merged $pr_url"
+          if queue_once_github_finishes_computing_mergeability; then
+            echo "::notice::Version bump PR will merge once approved: $pr_url"
           else
-            echo "::error::Could not merge the version bump PR. Merge it manually: $pr_url"
+            echo "::error::Could not queue the version bump PR. Approve and merge it manually: $pr_url"
             exit 1
           fi
