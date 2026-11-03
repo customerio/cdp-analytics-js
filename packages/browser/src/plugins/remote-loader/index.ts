@@ -5,6 +5,11 @@ import { DestinationPlugin, Plugin } from '../../core/plugin'
 import { loadScript } from '../../lib/load-script'
 import { getCDN } from '../../lib/parse-cdn'
 import {
+  getPinnedMode,
+  loadFirstPartyScript,
+  PinnedLoadRefused,
+} from '../../lib/pinned'
+import {
   applyDestinationMiddleware,
   DestinationMiddlewareFunction,
 } from '../middleware'
@@ -175,7 +180,16 @@ export async function remoteLoader(
       if (isPluginDisabled(userIntegrations, remotePlugin)) return
       try {
         const defaultCdn = new RegExp('https://cdp.customer.io')
-        if (obfuscate) {
+        const pinned = getPinnedMode()
+        if (pinned) {
+          // Pinned: the settings URL is never used. The plugin name picks a
+          // file in the pinned directory, checked against its compiled hash.
+          await loadFirstPartyScript({
+            name: remotePlugin.name,
+            path: `actions/${remotePlugin.name}.js`,
+            unpinnedUrl: remotePlugin.url,
+          })
+        } else if (obfuscate) {
           const urlSplit = remotePlugin.url.split('/')
           const name = urlSplit[urlSplit.length - 2]
           const obfuscatedURL = remotePlugin.url.replace(
@@ -193,7 +207,10 @@ export async function remoteLoader(
           await loadScript(remotePlugin.url.replace(defaultCdn, cdn))
         }
 
-        const libraryName = remotePlugin.libraryName
+        // Pinned bundles all export `<name>Destination` (as the edge names it).
+        const libraryName = pinned
+          ? `${remotePlugin.name}Destination`
+          : remotePlugin.libraryName
 
         // @ts-expect-error
         if (typeof window[libraryName] === 'function') {
@@ -230,6 +247,8 @@ export async function remoteLoader(
           })
         }
       } catch (error) {
+        // A pinned refusal has already been reported once.
+        if (error instanceof PinnedLoadRefused) return
         console.warn('Failed to load Remote Plugin', error)
       }
     }

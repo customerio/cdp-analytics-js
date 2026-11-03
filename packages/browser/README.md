@@ -433,6 +433,64 @@ no listeners when evaluated, and registers exactly one complete handler set thro
 listeners are registered and the bundled copy installs. Listener options are
 ignored.
 
+## Version-pinned install (Subresource Integrity)
+
+Load the snippet from a versioned path and pin it with
+[Subresource Integrity](https://developer.mozilla.org/docs/Web/Security/Subresource_Integrity).
+The browser then runs `analytics.min.js` only if its bytes match your hash, and
+the SDK runs only first-party code whose hash is compiled into that file. A
+compromised CDN, edge or settings response can't change the code on your site:
+a changed file is refused instead.
+
+```html
+<script>
+  !function(){var i="cioanalytics",analytics=(window[i]=window[i]||[]);if(!analytics.initialize)if(analytics.invoked)window.console&&console.error&&console.error("Snippet included twice.");else{analytics.invoked=!0;analytics.methods=["trackSubmit","trackClick","trackLink","trackForm","pageview","identify","reset","group","track","ready","alias","debug","page","once","off","on","addSourceMiddleware","addIntegrationMiddleware","setAnonymousId","addDestinationMiddleware"];analytics.factory=function(e){return function(){var t=Array.prototype.slice.call(arguments);t.unshift(e);analytics.push(t);return analytics}};for(var e=0;e<analytics.methods.length;e++){var key=analytics.methods[e];analytics[key]=analytics.factory(key)}analytics.load=function(key,e){var t=document.createElement("script");t.type="text/javascript";t.async=!0;t.setAttribute("data-global-customerio-analytics-key",i);
+  t.src="https://cdp.customer.io/v1/analytics-js/v/<VERSION>/analytics.min.js";
+  t.integrity="<sha384 of analytics.min.js from integrity.json>";
+  t.crossOrigin="anonymous";
+  var n=document.getElementsByTagName("script")[0];n.parentNode.insertBefore(t,n);analytics._writeKey=key;analytics._loadOptions=e};analytics.SNIPPET_VERSION="4.15.3";
+    analytics.load("<YOUR_WRITE_KEY>");
+    analytics.page();
+  }}();
+</script>
+```
+
+- `<VERSION>` is an exact version of this package. EU workspaces use
+  `cdp-eu.customer.io`. The write key comes from `analytics.load(key)`, not
+  from the URL.
+- Take the hash from `dist/pinned/<VERSION>/integrity.json` in the npm package
+  (`npm pack @customerio/cdp-analytics-browser@<VERSION>`), a source
+  independent of our CDN. The same file is served at
+  `https://cdp.customer.io/v1/analytics-js/v/<VERSION>/integrity.json`.
+- To upgrade, change the version and the hash together.
+
+In pinned mode (the script was loaded from `/v/<VERSION>/` and that is its own
+version):
+
+- Webpack chunks, device and cloud-plugin destinations
+  (`actions/<name>.js`) and the web push plugin load only from the same
+  `/v/<VERSION>/` directory, each with `integrity` and
+  `crossorigin="anonymous"`, using hashes compiled into `analytics.min.js`.
+- URLs in the settings response are never used to load code; only the
+  destination's name picks a pinned file. A destination or middleware that is
+  not in the pinned build is not loaded: the SDK logs one `console.error` naming
+  it and keeps working. A file that fails its hash is blocked by the browser;
+  if it is a destination or the web push plugin the SDK keeps working, if it is
+  a core chunk (for example the routing or schema filter) the SDK does not
+  start.
+- The Analytics.js classic fallback after a CSP error is off, and a web push
+  `runtimeUrl` is honoured only from your load options, not from settings.
+- Not covered: third-party scripts a destination loads itself (for example
+  Meta's `fbevents.js`), in-app messages (rendered in a cross-origin iframe),
+  and the web push service worker's runtime import (pin it with
+  `runtimeUrl: false`).
+
+The cdnjs `babel-polyfill` that the SDK loads for old browsers always carries
+`integrity` and `crossorigin`, pinned or not.
+
+The destination bundles are vendored byte for byte in
+[`vendor/destinations/`](vendor/destinations/README.md).
+
 ## Other Regions
 
 If you're in our [EU data center](https://customer.io/docs/accounts-and-workspaces/data-centers/) you will need to specify an alternate endpoint:

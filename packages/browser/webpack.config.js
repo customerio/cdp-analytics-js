@@ -6,6 +6,8 @@ const CompressionPlugin = require('compression-webpack-plugin')
 const BundleAnalyzerPlugin =
   require('webpack-bundle-analyzer').BundleAnalyzerPlugin
 const CircularDependencyPlugin = require('circular-dependency-plugin')
+const { PinnedBuildPlugin } = require('./scripts/pinned-build-plugin')
+const { version } = require('./package.json')
 
 const isProd = process.env.NODE_ENV === 'production'
 const ASSET_PATH = isProd
@@ -59,6 +61,13 @@ const plugins = [
       })
     },
   },
+  // Version-pinned SDK with SRI (PIN-1029): dist/pinned/<version>/.
+  new PinnedBuildPlugin({
+    version,
+    enabled: isProd,
+    outputDir: path.resolve(__dirname, 'dist/pinned', version),
+    destinationsDir: path.resolve(__dirname, 'vendor/destinations'),
+  }),
   new CompressionPlugin({ exclude: /cio-webpush-sw[\w.-]*\.js$/ }),
   new webpack.EnvironmentPlugin({
     ASSET_PATH,

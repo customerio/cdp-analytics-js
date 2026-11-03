@@ -3,7 +3,8 @@ import { LegacyIntegrationConfiguration } from '../../browser'
 import { getNextIntegrationsURL } from '../../lib/parse-cdn'
 import { Context } from '../../core/context'
 import { User } from '../../core/user'
-import { loadScript, unloadScript } from '../../lib/load-script'
+import { unloadScript } from '../../lib/load-script'
+import { firstPartyScriptUrl, loadFirstPartyScript } from '../../lib/pinned'
 import {
   LegacyIntegration,
   ClassicIntegrationBuilder,
@@ -77,11 +78,14 @@ export async function loadIntegration(
   const obfuscatedPathName = obfuscatePathName(pathName, obfuscate)
   const path = getNextIntegrationsURL()
 
-  const fullPath = `${path}/${obfuscatedPathName ?? pathName
+  const unpinnedUrl = `${path}/${obfuscatedPathName ?? pathName
     }.js?version=${version}`
+  // Pinned: no obfuscation and no version query; the bundle is fixed.
+  const script = { name, path: `actions/${pathName}.js`, unpinnedUrl }
+  const fullPath = firstPartyScriptUrl(script)
 
   try {
-    await loadScript(fullPath)
+    await loadFirstPartyScript(script)
     recordLoadMetrics(fullPath, ctx, name)
   } catch (err) {
     ctx.stats.gauge('legacy_destination_time', -1, [`plugin:${name}`, `failed`])
@@ -90,7 +94,15 @@ export async function loadIntegration(
 
   // @ts-ignore
   const deps: string[] = window[`${pathName}Deps`]
-  await Promise.all(deps.map((dep) => loadScript(path + dep + '.gz')))
+  await Promise.all(
+    deps.map((dep) =>
+      loadFirstPartyScript({
+        name,
+        path: `actions${dep}.gz`,
+        unpinnedUrl: path + dep + '.gz',
+      })
+    )
+  )
 
   // @ts-ignore
   window[`${pathName}Loader`]()
@@ -110,8 +122,11 @@ export async function unloadIntegration(
   const pathName = normalizeName(name)
   const obfuscatedPathName = obfuscatePathName(name, obfuscate)
 
-  const fullPath = `${path}/${obfuscatedPathName ?? pathName
-    }.js?version=${version}`
+  const fullPath = firstPartyScriptUrl({
+    path: `actions/${pathName}.js`,
+    unpinnedUrl: `${path}/${obfuscatedPathName ?? pathName
+      }.js?version=${version}`,
+  })
 
   return unloadScript(fullPath)
 }
