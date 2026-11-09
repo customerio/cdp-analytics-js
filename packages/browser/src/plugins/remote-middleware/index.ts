@@ -1,7 +1,7 @@
 import { LegacySettings } from '../../browser'
 import { Context } from '../../core/context'
 import { isServer } from '../../core/environment'
-import { loadScript } from '../../lib/load-script'
+import { loadFirstPartyScript, PinnedLoadRefused } from '../../lib/pinned'
 import { getNextIntegrationsURL } from '../../lib/parse-cdn'
 import { MiddlewareFunction } from '../middleware'
 
@@ -28,10 +28,16 @@ export async function remoteMiddlewares(
     const fullPath = `${path}/middleware/${bundleName}/latest/${bundleName}.js.gz`
 
     try {
-      await loadScript(fullPath)
+      await loadFirstPartyScript({
+        name,
+        path: `actions/middleware/${nonNamespaced}/latest/${nonNamespaced}.js.gz`,
+        unpinnedUrl: fullPath,
+      })
       // @ts-ignore
       return window[`${nonNamespaced}Middleware`] as MiddlewareFunction
     } catch (error: any) {
+      // A pinned refusal has already been reported once.
+      if (error instanceof PinnedLoadRefused) return
       ctx.log('error', error)
       ctx.stats.increment('failed_remote_middleware')
     }
