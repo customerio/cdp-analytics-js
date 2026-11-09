@@ -1004,7 +1004,7 @@ test('allows a dedicated scope beneath an unrelated root worker', async () => {
     })
   ).resolves.toEqual(value)
   expect(s.sw.register).toHaveBeenCalledWith(
-    '/notifications/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io'
+    '/notifications/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io&runtime=off'
   )
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
@@ -1024,13 +1024,14 @@ test('allows explicit integration with the existing worker', async () => {
     s.analytics.webPush!.subscribe({ serviceWorkerUrl: '/host-worker.js' })
   ).resolves.toEqual(value)
   expect(s.sw.register).toHaveBeenCalledWith(
-    '/host-worker.js?track=https%3A%2F%2Ftrack.customer.io'
+    '/host-worker.js?track=https%3A%2F%2Ftrack.customer.io&runtime=off'
   )
   await s.plugin.unload?.(Context.system(), s.analytics)
 })
 
 test.each([
-  [undefined, ''],
+  [undefined, '&runtime=off'],
+  [true, ''],
   [
     '/cio/cio-webpush-sw-runtime.v1.js',
     '&runtime=%2Fcio%2Fcio-webpush-sw-runtime.v1.js',
@@ -1069,11 +1070,34 @@ const fastDeadlines = () => {
   return delays
 }
 
+describe('runtime default', () => {
+  test('a first install registers runtime=off without a preflight', async () => {
+    const s = setup()
+    firstInstall(s)
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).not.toHaveBeenCalled()
+    expect(s.sw.register).toHaveBeenCalledWith(`${tracked}&runtime=off`)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+
+  test('an installed worker on the CDN runtime moves to runtime=off', async () => {
+    const s = setup()
+    installed(s, '')
+    await s.load()
+    await s.analytics.webPush!.subscribe()
+    expect(s.fetch).not.toHaveBeenCalled()
+    expect(s.sw.register).toHaveBeenCalledWith(`${tracked}&runtime=off`)
+    await s.plugin.unload?.(Context.system(), s.analytics)
+  })
+})
+
 describe('runtime preflight', () => {
   afterEach(() => jest.restoreAllMocks())
+  const cdn = { runtimeUrl: true }
 
-  test('a first install preflights the default runtime and keeps it when the host answers', async () => {
-    const s = setup()
+  test('a first install preflights the CDN runtime and keeps it when the host answers', async () => {
+    const s = setup('person', cdn)
     firstInstall(s)
     await s.load()
     await s.analytics.webPush!.subscribe()
@@ -1091,7 +1115,10 @@ describe('runtime preflight', () => {
   })
 
   test('preflights the EU runtime for the EU track host', async () => {
-    const s = setup('person', { trackUrl: 'https://track-eu.customer.io' })
+    const s = setup('person', {
+      trackUrl: 'https://track-eu.customer.io',
+      runtimeUrl: true,
+    })
     firstInstall(s)
     await s.load()
     await s.analytics.webPush!.subscribe()
@@ -1103,7 +1130,7 @@ describe('runtime preflight', () => {
   })
 
   test('a first install registers runtime=off when the runtime host is blocked', async () => {
-    const s = setup()
+    const s = setup('person', cdn)
     firstInstall(s)
     s.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
     await s.load()
@@ -1113,7 +1140,7 @@ describe('runtime preflight', () => {
   })
 
   test('a first install registers runtime=off when the runtime host stalls for 3 s', async () => {
-    const s = setup()
+    const s = setup('person', cdn)
     firstInstall(s)
     let signal: AbortSignal | undefined
     s.fetch.mockImplementation((_url, init: RequestInit) => {
@@ -1130,7 +1157,7 @@ describe('runtime preflight', () => {
   })
 
   test('the preflight result is reused for the rest of the page load', async () => {
-    const s = setup()
+    const s = setup('person', cdn)
     firstInstall(s)
     s.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
     await s.load()
@@ -1141,21 +1168,36 @@ describe('runtime preflight', () => {
     await s.plugin.unload?.(Context.system(), s.analytics)
   })
 
-  test.each([
-    ['the default runtime', ''],
-    ['runtime=off', '&runtime=off'],
-  ])('an installed worker keeps %s without a preflight', async (_, query) => {
-    const s = setup()
-    installed(s, query)
+  test('an installed worker keeps the CDN runtime without a preflight', async () => {
+    const s = setup('person', cdn)
+    installed(s, '')
     await s.load()
     await s.analytics.webPush!.subscribe()
     expect(s.fetch).not.toHaveBeenCalled()
-    expect(s.sw.register).toHaveBeenCalledWith(`${tracked}${query}`)
+    expect(s.sw.register).toHaveBeenCalledWith(tracked)
     await s.plugin.unload?.(Context.system(), s.analytics)
   })
 
+  test.each([
+    [true, ''],
+    [false, '&runtime=off'],
+  ])(
+    'opting in moves a runtime=off worker to the CDN only when reachable (%s)',
+    async (reachable, query) => {
+      const s = setup('person', cdn)
+      installed(s, '&runtime=off')
+      if (!reachable)
+        s.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
+      await s.load()
+      await s.analytics.webPush!.subscribe()
+      expect(s.fetch).toHaveBeenCalledTimes(1)
+      expect(s.sw.register).toHaveBeenCalledWith(`${tracked}${query}`)
+      await s.plugin.unload?.(Context.system(), s.analytics)
+    }
+  )
+
   test('a worker that is still installing does not count as installed', async () => {
-    const s = setup()
+    const s = setup('person', cdn)
     s.sw.getRegistration.mockResolvedValue({
       ...s.registration,
       active: null,
@@ -1298,7 +1340,7 @@ test('subscribes with the VAPID key and exact Pipelines device event', async () 
   await s.load()
   expect(await s.analytics.webPush!.subscribe()).toEqual(value)
   expect(s.sw.register).toHaveBeenCalledWith(
-    '/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io'
+    '/cio-webpush-sw.js?track=https%3A%2F%2Ftrack.customer.io&runtime=off'
   )
   expect(s.manager.subscribe).toHaveBeenCalledWith({
     userVisibleOnly: true,
