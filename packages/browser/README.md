@@ -66,9 +66,14 @@ Options:
   the file skips `skipWaiting()`/`clients.claim()`, and register your worker with
   the same `?track=` query so delivered and opened events still reach Customer.io
   (and the same `?runtime=` query if you set `runtimeUrl`).
-- `trackUrl`: defaults to `https://track.customer.io`, or `https://track-eu.customer.io`
-  when using the EU CDN. Set it explicitly when proxying the SDK or using the
-  standalone plugin with a custom CDN.
+- `trackUrl`: needed only when you proxy Customer.io's track host. Every push
+  payload carries a `track_url` for the workspace's region (US or EU), and the
+  worker reports delivered and opened events there, so EU workspaces work without
+  setting anything. The plugin still registers the worker with `?track=` (default
+  `https://track.customer.io`, or `https://track-eu.customer.io` on the EU CDN).
+  A `?track=` host other than Customer.io's own track hosts is treated as your
+  proxy and always wins; otherwise the payload's `track_url` is used, and
+  `?track=` is the fallback for payloads without one.
 - `runtimeUrl`: where the worker loads its self-updating runtime (see below).
   Defaults to `https://cdp.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js`,
   or `cdp-eu.customer.io` when `trackUrl` is the EU host. Pass an absolute URL or a
@@ -153,7 +158,10 @@ classic script, so if your existing worker is a module service worker
 scope instead. The ordinary notification permission
 request still happens from your user action.
 
-The worker reads the metrics endpoint from its `?track=` query, and the runtime
+The worker reports metrics to the `track_url` in each push payload, unless its
+`?track=` query names a proxy (a host other than `track.customer.io` or
+`track-eu.customer.io`), which wins; `?track=` is also the fallback for payloads
+without `track_url`. It reads the runtime
 location from `?runtime=` when you set `runtimeUrl`. When integrating with an
 existing worker, preserve both in every host registration call;
 registering the bare URL later disables new delivered/opened metrics, but queued
@@ -400,7 +408,7 @@ key or a private VAPID key. The public snippet uses `cioanalytics`; if you set
         CustomerIOWebPush.WebPushPlugin({
           vapidPublicKey: '<YOUR_PUBLIC_VAPID_KEY>',
           serviceWorkerUrl: '/cio-webpush-sw.js',
-          trackUrl: 'https://track.customer.io', // EU: https://track-eu.customer.io
+          // trackUrl is only needed when you proxy Customer.io's track host
         })
       )
       await analytics.identify('<YOUR_USER_ID>')
