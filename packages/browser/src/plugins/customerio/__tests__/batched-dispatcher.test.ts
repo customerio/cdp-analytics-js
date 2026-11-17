@@ -263,21 +263,39 @@ describe('Batching', () => {
       expect(fetch).toHaveBeenCalledTimes(2)
     })
 
-    it('asks to retry events in a batch the API did not accept', async () => {
-      fetch.mockResolvedValue({ ok: false, status: 503 })
+    it('does not send the flushed events again when the timeout expires', async () => {
       const { dispatch } = batch(`https://cdp.customer.io`)
       const onRetry = jest.fn()
 
-      await dispatch(
-        `https://cdp.customer.io/v1/t`,
-        { hello: 'world' },
-        onRetry
-      )
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '1' }, onRetry)
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '2' }, onRetry)
       window.dispatchEvent(new Event('pagehide'))
+      jest.runAllTimers()
       await flushPromises()
 
       expect(fetch).toHaveBeenCalledTimes(1)
-      expect(onRetry).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(fetch.mock.calls[0][1].body).batch).toEqual([
+        { event: '1' },
+        { event: '2' },
+      ])
+      expect(onRetry).not.toHaveBeenCalled()
+    })
+
+    it('asks once to retry each event of a batch the API did not accept', async () => {
+      fetch.mockResolvedValue({ ok: false, status: 500 })
+      const { dispatch } = batch(`https://cdp.customer.io`)
+      const first = jest.fn()
+      const second = jest.fn()
+
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '1' }, first)
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '2' }, second)
+      window.dispatchEvent(new Event('pagehide'))
+      await flushPromises()
+      jest.runAllTimers()
+      await flushPromises()
+
+      expect(first).toHaveBeenCalledTimes(1)
+      expect(second).toHaveBeenCalledTimes(1)
     })
   })
 

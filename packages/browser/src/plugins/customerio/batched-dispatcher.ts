@@ -73,10 +73,16 @@ export default function batch(remote: string, config?: BatchingDispatchConfig) {
         if (isRetryableStatus(res.status)) {
           throw new Error(`Retryable response from server: ${res.status}`)
         }
+        batch.forEach((event) => retries.delete(event))
       })
       .catch(() => {
         // The API answers for the whole batch, so every event in it is retried.
-        batch.forEach((event) => retries.get(event)?.())
+        // Each callback is removed before it runs, so it runs at most once.
+        batch.forEach((event) => {
+          const onRetry = retries.get(event)
+          retries.delete(event)
+          onRetry?.()
+        })
       })
   }
 
@@ -104,8 +110,17 @@ export default function batch(remote: string, config?: BatchingDispatchConfig) {
   onPageLeave(() => {
     pageUnloaded = true
 
+    // Take the events out of the buffer, as `flush` does, so the scheduled
+    // flush can't send them a second time after a tab is hidden.
+    if (schedule) {
+      clearTimeout(schedule)
+      schedule = undefined
+    }
+
     if (buffer.length) {
-      const reqs = chunks(buffer).map(sendBatch)
+      const pending = buffer
+      buffer = []
+      const reqs = chunks(pending).map(sendBatch)
       Promise.all(reqs).catch(console.error)
     }
   })
