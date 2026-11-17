@@ -13,9 +13,8 @@
 // Importing it into your own worker with importScripts is supported only if
 // your worker supplies its own lifecycle (skipWaiting, clients.claim) and sets
 // `self.cioWebPushLifecycle = false` before the import. An imported copy reads
-// `track` and `runtime` from your worker's URL. Without `track`, no new metrics
-// are created; previously queued reports still retry using their original
-// tracking URL.
+// `track` and `runtime` from your worker's URL. Queued reports always retry
+// using their original tracking URL.
 //
 // Metrics go to the `?track=` URL only when it is a first-party proxy (a host
 // other than Customer.io's own track hosts). Otherwise the worker uses the
