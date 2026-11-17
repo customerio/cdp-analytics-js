@@ -45,11 +45,16 @@ const fatEvent = {
   favoriteFruit: 'strawberry',
 }
 
+// Settles promise callbacks while jest's fake timers are installed.
+const flushPromises = (): Promise<void> =>
+  new Promise((resolve) => jest.requireActual('timers').setImmediate(resolve))
+
 describe('Batching', () => {
   beforeEach(() => {
     jest.resetAllMocks()
     jest.restoreAllMocks()
     jest.useFakeTimers()
+    fetch.mockResolvedValue({ ok: true, status: 200 })
   })
 
   afterEach(() => {
@@ -256,6 +261,103 @@ describe('Batching', () => {
       window.dispatchEvent(new Event('pagehide'))
 
       expect(fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('asks to retry events in a batch the API did not accept', async () => {
+      fetch.mockResolvedValue({ ok: false, status: 503 })
+      const { dispatch } = batch(`https://cdp.customer.io`)
+      const onRetry = jest.fn()
+
+      await dispatch(
+        `https://cdp.customer.io/v1/t`,
+        { hello: 'world' },
+        onRetry
+      )
+      window.dispatchEvent(new Event('pagehide'))
+      await flushPromises()
+
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(onRetry).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('retries', () => {
+    it.each([500, 502, 503, 408, 429])(
+      'asks to retry every event in a batch answered with %i',
+      async (status) => {
+        fetch.mockResolvedValue({ ok: false, status })
+        const { dispatch } = batch(`https://cdp.customer.io`, { size: 2 })
+        const first = jest.fn()
+        const second = jest.fn()
+
+        await dispatch(`https://cdp.customer.io/v1/t`, { event: '1' }, first)
+        expect(first).not.toHaveBeenCalled()
+        await dispatch(`https://cdp.customer.io/v1/t`, { event: '2' }, second)
+
+        expect(fetch).toHaveBeenCalledTimes(1)
+        expect(first).toHaveBeenCalledTimes(1)
+        expect(second).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it('asks to retry every event in a batch that failed to send', async () => {
+      fetch.mockRejectedValue(new TypeError('Failed to fetch'))
+      const { dispatch } = batch(`https://cdp.customer.io`, { size: 2 })
+      const first = jest.fn()
+      const second = jest.fn()
+
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '1' }, first)
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '2' }, second)
+
+      expect(first).toHaveBeenCalledTimes(1)
+      expect(second).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([200, 400, 401, 404, 413])(
+      'does not retry a batch answered with %i',
+      async (status) => {
+        fetch.mockResolvedValue({ ok: status < 300, status })
+        const { dispatch } = batch(`https://cdp.customer.io`, { size: 2 })
+        const onRetry = jest.fn()
+
+        await dispatch(`https://cdp.customer.io/v1/t`, { event: '1' }, onRetry)
+        await dispatch(`https://cdp.customer.io/v1/t`, { event: '2' }, onRetry)
+
+        expect(fetch).toHaveBeenCalledTimes(1)
+        expect(onRetry).not.toHaveBeenCalled()
+      }
+    )
+
+    it('asks to retry a batch sent when the timeout expires', async () => {
+      fetch.mockResolvedValue({ ok: false, status: 500 })
+      const { dispatch } = batch(`https://cdp.customer.io`, {
+        size: 100,
+        timeout: 10000,
+      })
+      const onRetry = jest.fn()
+
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '1' }, onRetry)
+      jest.advanceTimersByTime(11000)
+      await flushPromises()
+
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(onRetry).toHaveBeenCalledTimes(1)
+    })
+
+    it('only retries the events of the batch that failed', async () => {
+      fetch
+        .mockResolvedValueOnce({ ok: false, status: 500 })
+        .mockResolvedValueOnce({ ok: true, status: 200 })
+      const { dispatch } = batch(`https://cdp.customer.io`, { size: 1 })
+      const failed = jest.fn()
+      const delivered = jest.fn()
+
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '1' }, failed)
+      await dispatch(`https://cdp.customer.io/v1/t`, { event: '2' }, delivered)
+
+      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(failed).toHaveBeenCalledTimes(1)
+      expect(delivered).not.toHaveBeenCalled()
     })
   })
 })
