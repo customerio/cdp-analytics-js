@@ -1,6 +1,6 @@
 /** @type { import('eslint').Linter.Config } */
 module.exports = {
-  ignorePatterns: ['e2e-tests', 'qa', '/*.tmp.*/'],
+  ignorePatterns: ['e2e-tests', 'qa', '/*.tmp.*/', 'vendor'],
   extends: ['../../.eslintrc'],
   env: {
     node: true, // TODO: change to false when node is abstracted out

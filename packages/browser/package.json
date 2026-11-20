@@ -20,7 +20,9 @@
     "dist/",
     "src/",
     "!**/__tests__/**",
-    "!**/tester/**"
+    "!**/tester/**",
+    "!dist/pinned/**",
+    "dist/pinned/*/integrity.json"
   ],
   "sideEffects": false,
   "scripts": {
