@@ -13,9 +13,13 @@
 // Importing it into your own worker with importScripts is supported only if
 // your worker supplies its own lifecycle (skipWaiting, clients.claim) and sets
 // `self.cioWebPushLifecycle = false` before the import. An imported copy reads
-// `track` and `runtime` from your worker's URL. Without `track`, no new metrics
-// are created; previously queued reports still retry using their original
-// tracking URL.
+// `track` and `runtime` from your worker's URL. Queued reports always retry
+// using their original tracking URL.
+//
+// Metrics go to the `?track=` URL only when it is a first-party proxy (a host
+// other than Customer.io's own track hosts). Otherwise the worker uses the
+// `track_url` that Customer.io adds to every push payload, which always names
+// the workspace's own region; `?track=` is the fallback for older payloads.
 ;(function (install) {
   // scripts/build-prep.sh keeps this equal to the package version.
   const version = '0.8.3'
@@ -207,6 +211,29 @@
     )
   }
 
+  const ownTrackHosts = ['track.customer.io', 'track-eu.customer.io']
+
+  function httpsUrl(value) {
+    if (typeof value !== 'string') return
+    try {
+      if (new URL(value).protocol === 'https:') return value
+    } catch {
+      // Not a URL.
+    }
+  }
+
+  // A deliberate first-party proxy in `?track=` wins; otherwise trust the
+  // encrypted payload's regional URL; otherwise fall back to `?track=`.
+  function metricBase(payloadTrackUrl) {
+    try {
+      if (trackUrl && !ownTrackHosts.includes(new URL(trackUrl).hostname))
+        return trackUrl
+    } catch {
+      // An unparseable `?track=` is not a proxy.
+    }
+    return httpsUrl(payloadTrackUrl) || trackUrl
+  }
+
   function owned(deliveryId, deviceId) {
     return (
       typeof deliveryId === 'string' &&
@@ -390,7 +417,8 @@
       const device_id =
         data.device_id ||
         (await self.registration.pushManager.getSubscription())?.endpoint
-      if (!trackUrl || !data.delivery_id || !device_id) return
+      const base = metricBase(data.track_url)
+      if (!base || !data.delivery_id || !device_id) return
       const body = {
         delivery_id: data.delivery_id,
         device_id,
@@ -398,7 +426,7 @@
         ...(action ? { action } : {}),
         timestamp: Math.floor(Date.now() / 1000),
       }
-      const url = trackUrl.replace(/\/$/, '') + '/push/events'
+      const url = base.replace(/\/$/, '') + '/push/events'
       const key = JSON.stringify([url, data.delivery_id, event, device_id])
       try {
         await updateMetrics((store, records, now) => {
@@ -546,6 +574,9 @@
         const data = {
           ...(payload.custom_data !== undefined
             ? { custom_data: payload.custom_data }
+            : {}),
+          ...(httpsUrl(payload.track_url)
+            ? { track_url: payload.track_url }
             : {}),
           link: payload.link,
           actions,
