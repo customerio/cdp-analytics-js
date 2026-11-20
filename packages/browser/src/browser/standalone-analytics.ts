@@ -1,6 +1,7 @@
 import { AnalyticsBrowser } from '.'
 import { embeddedWriteKey } from '../lib/embedded-write-key'
 import { isSecretKey, SECRET_KEY_ERROR } from '../lib/secret-key'
+import { isHostedPage } from '../lib/hosted-page'
 import { AnalyticsSnippet } from './standalone-interface'
 import {
   getGlobalAnalytics,
@@ -49,7 +50,10 @@ function getWriteKey(): string | undefined {
 
 export async function install(): Promise<void> {
   const writeKey = getWriteKey()
-  const options = getGlobalAnalytics()?._loadOptions ?? {}
+  const loadOptions = getGlobalAnalytics()?._loadOptions ?? {}
+  const options = isHostedPage(window.location.hostname)
+    ? { ...loadOptions, disableClientPersistence: true }
+    : loadOptions
   if (!writeKey) {
     console.error(
       'Failed to load Write Key. Make sure to use the latest version of the snippet, which can be found in your source settings.'

@@ -286,3 +286,64 @@ describe('standalone bundle', () => {
     expect(page).toHaveBeenCalled()
   })
 })
+
+describe('standalone bundle on a Customer.io hosted page', () => {
+  const loadOptions: InitOptions = { retryQueue: false }
+  const isolated: InitOptions = {
+    ...loadOptions,
+    disableClientPersistence: true,
+  }
+
+  const cases: { name: string; url: string; expected: InitOptions }[] = [
+    {
+      name: 'the US form host',
+      url: 'https://form.customer.io/abc/index.html',
+      expected: isolated,
+    },
+    {
+      name: 'a regional form host',
+      url: 'https://form-eu.customer.io/abc/index.html',
+      expected: isolated,
+    },
+    {
+      name: 'the staging form host',
+      url: 'https://form-staging.customer.io/abc/index.html',
+      expected: isolated,
+    },
+    {
+      name: "a customer's own site",
+      url: 'https://www.example.com/signup',
+      expected: loadOptions,
+    },
+    {
+      name: 'another customer.io host',
+      url: 'https://fly.customer.io/',
+      expected: loadOptions,
+    },
+    {
+      name: 'a subdomain of a form host',
+      url: 'https://app.form.customer.io/',
+      expected: loadOptions,
+    },
+    {
+      name: 'a host that only starts like a form host',
+      url: 'https://form.customer.io.example.com/',
+      expected: loadOptions,
+    },
+  ]
+
+  it.each(cases)('loads with the right storage on $name', async (tc) => {
+    const jsd = new JSDOM('<!DOCTYPE html>', { url: tc.url })
+    const win = jsd.window as unknown as Window & typeof globalThis
+    win.analyticsWriteKey = 'write_key_abc_123'
+    ;(win as any).analytics = { _loadOptions: loadOptions }
+    jest.spyOn(global, 'window', 'get').mockImplementation(() => win)
+    const spy = jest
+      .spyOn(AnalyticsBrowser, 'standalone')
+      .mockResolvedValueOnce({} as AnalyticsStandalone)
+
+    await install()
+
+    expect(spy).toHaveBeenCalledWith('write_key_abc_123', tc.expected)
+  })
+})
