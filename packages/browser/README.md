@@ -70,13 +70,13 @@ Options:
   when using the EU CDN. Set it explicitly when proxying the SDK or using the
   standalone plugin with a custom CDN.
 - `runtimeUrl`: where the worker loads its self-updating runtime (see below).
-  Defaults to `https://cdp.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js`,
-  or `cdp-eu.customer.io` when `trackUrl` is the EU host. Pass an absolute URL or a
+  Off by default: the worker keeps its bundled copy and makes no request
+  (registered as `?runtime=off`). `true` opts in to
+  `https://cdp.customer.io/v1/analytics-js/cio-webpush-sw-runtime.v1.js`, or
+  `cdp-eu.customer.io` when `trackUrl` is the EU host. Pass an absolute URL or a
   root-relative path (for example `/cio/cio-webpush-sw-runtime.v1.js`) to serve it
-  first-party through your proxy, or `false` to keep the worker's bundled copy and
-  make no request (registered as `?runtime=off`). EU sites that proxy `trackUrl`
-  get the US CDN by default; set `runtimeUrl` to the `cdp-eu.customer.io` URL or
-  your own proxy.
+  first-party through your proxy. EU sites that proxy `trackUrl` get the US CDN
+  with `true`; set `runtimeUrl` to the `cdp-eu.customer.io` URL or your own proxy.
 
 Public API on the initialized analytics instance:
 
@@ -154,16 +154,22 @@ scope instead. The ordinary notification permission
 request still happens from your user action.
 
 The worker reads the metrics endpoint from its `?track=` query, and the runtime
-location from `?runtime=` when you set `runtimeUrl`. When integrating with an
-existing worker, preserve both in every host registration call;
+location from `?runtime=`. A worker registered without `?runtime=` loads the CDN
+runtime, so when integrating with an existing worker, preserve both in every host
+registration call (`?runtime=off` unless you opted in);
 registering the bare URL later disables new delivered/opened metrics, but queued
 reports retain and retry their original endpoint. Rebuild/copy the push handlers when updating the SDK.
 
-The hosted worker updates itself. It bundles the complete runtime, so it works with
-no network request, and at startup it also tries `importScripts` on the Customer.io
-CDN's `cio-webpush-sw-runtime.v1.js` (the same file, published by every SDK
-release). When that copy is newer than the bundled one it runs instead, so worker
-fixes reach your site without re-copying the file. A blocked, failed (any HTTP
+The hosted worker can update itself, if you opt in with `runtimeUrl`. It bundles
+the complete runtime, so it works with no network request. With `runtimeUrl` set,
+at startup it also tries `importScripts` on `cio-webpush-sw-runtime.v1.js` (the
+same file, published by every SDK release) from the Customer.io CDN or your URL.
+When that copy is newer than the bundled one it runs instead, so worker fixes
+reach your site without re-copying the file. It's off by default because the
+imported runtime runs on your origin with the worker's full scope: it can see
+every request the worker controls. Sites that subscribed with an earlier
+release, while the runtime was on by default, are re-registered with
+`?runtime=off` on their next `subscribe()`. A blocked, failed (any HTTP
 error), older, or broken import leaves the bundled copy in charge and the worker
 still installs. A runtime host that drops or stalls the request is different:
 Firefox fails the install, or never finishes it, once the import has waited more

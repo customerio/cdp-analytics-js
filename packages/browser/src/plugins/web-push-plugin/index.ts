@@ -20,12 +20,12 @@ export interface WebPushPluginSettings {
   serviceWorkerUrl?: string
   trackUrl?: string
   /**
-   * Where the service worker loads its self-updating runtime: an absolute URL
-   * or a root-relative path (such as a first-party proxy). Defaults to the
-   * Customer.io CDN for the track region. `false` keeps the worker's bundled
-   * copy and makes no request.
+   * Where the service worker loads its self-updating runtime. Off by default
+   * (`false`): the worker keeps its bundled copy and makes no request. `true`
+   * loads it from the Customer.io CDN for the track region; an absolute URL or
+   * a root-relative path loads it from there (such as a first-party proxy).
    */
-  runtimeUrl?: string | false
+  runtimeUrl?: string | boolean
   enabled?: boolean
 }
 
@@ -661,17 +661,21 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           'Web push would replace an existing service worker. Integrate push handlers into that worker or use a worker in a dedicated scope.'
         )
       url.searchParams.set('track', trackUrl)
-      if (settings.runtimeUrl !== undefined)
+      // A live runtime runs whatever the CDN serves on the site's origin, so a
+      // site opts in. Without a query the worker loads the CDN runtime.
+      const runtimeUrl = settings.runtimeUrl ?? false
+      if (runtimeUrl !== true)
         url.searchParams.set(
           'runtime',
-          settings.runtimeUrl === false ? 'off' : settings.runtimeUrl
+          runtimeUrl === false ? 'off' : runtimeUrl
         )
       // A runtime host that drops or stalls requests can make Firefox fail the
       // install, or hang it, and delays Chromium's. So before a worker first
       // loads a runtime URL, check that its host answers; if not, register
       // runtime=off and the worker uses its bundled copy. An installed worker
-      // keeps its runtime query, including off, so the worker URL never churns;
-      // only a changed runtimeUrl setting is preflighted for it.
+      // already on the wanted runtime keeps its query, so the worker URL never
+      // churns; any other runtime, including an opt-in on a worker registered
+      // off, is preflighted first.
       const installedWorker =
         existingRegistration?.active || existingRegistration?.waiting
       const installed =
@@ -685,12 +689,7 @@ export function WebPushPlugin(settings: WebPushPluginSettings): Plugin {
           ? url.searchParams.delete('runtime')
           : url.searchParams.set('runtime', previous)
       const runtime = workerRuntimeUrl(url)
-      if (
-        installed &&
-        (workerRuntimeUrl(installed) === runtime ||
-          (settings.runtimeUrl === undefined && previous === 'off'))
-      )
-        keep()
+      if (installed && workerRuntimeUrl(installed) === runtime) keep()
       else if (runtime && !(await preflight(runtime))) keep()
       let timer: number | undefined
       const install = (async () => {
