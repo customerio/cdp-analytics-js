@@ -8,7 +8,10 @@ import { PriorityQueue } from '../../lib/priority-queue'
 import { PersistedPriorityQueue } from '../../lib/priority-queue/persisted'
 import { toFacade } from '../../lib/to-facade'
 import batch, { BatchingDispatchConfig } from './batched-dispatcher'
-import standard, { StandardDispatcherConfig } from './fetch-dispatcher'
+import standard, {
+  isRetryableStatus,
+  StandardDispatcherConfig,
+} from './fetch-dispatcher'
 import { normalize } from './normalize'
 import { scheduleFlush } from './schedule-flush'
 import {
@@ -93,6 +96,17 @@ export function customerio(
   // ordinary analytics events use fire-and-forget batching.
   const deviceClient = standard({ keepalive: true })
 
+  // Queue an event the API did not accept for another attempt, with backoff,
+  // up to the buffer's attempt limit.
+  function retry(ctx: Context): Context {
+    if (supersession.stale(ctx)) return ctx
+    if (isDeviceEvent(ctx)) analytics.emit(deviceDeliveryEvent, ctx)
+    buffer.pushWithBackoff(ctx)
+    // eslint-disable-next-line @typescript-eslint/no-use-before-define
+    scheduleFlush(flushing, buffer, customerio, scheduleFlush)
+    return ctx
+  }
+
   async function send(ctx: Context): Promise<Context> {
     supersession.supersede(ctx, (predicate) => {
       const analyticsRemoved = analytics.queue.queue.remove(predicate)
@@ -134,7 +148,9 @@ export function customerio(
     return (lifecycle ? deviceClient : client)
       .dispatch(
         `${remote}/${path}`,
-        normalize(analytics, json, settings, integrations)
+        normalize(analytics, json, settings, integrations),
+        // The batching dispatcher reports a failed batch after this resolves.
+        () => retry(ctx)
       )
       .then((response) => {
         if (lifecycle) {
@@ -143,8 +159,7 @@ export function customerio(
             ctx.event.event === 'Device Deleted' &&
             status >= 400 &&
             status < 500 &&
-            status !== 408 &&
-            status !== 429
+            !isRetryableStatus(status)
           if (!ok && !terminalDelete)
             throw new Error('Web push device request was not accepted.')
           if (ok) acceptDevice(ctx)
@@ -153,14 +168,7 @@ export function customerio(
         }
         return ctx
       })
-      .catch(() => {
-        if (supersession.stale(ctx)) return ctx
-        if (lifecycle) analytics.emit(deviceDeliveryEvent, ctx)
-        buffer.pushWithBackoff(ctx)
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        scheduleFlush(flushing, buffer, customerio, scheduleFlush)
-        return ctx
-      })
+      .catch(() => retry(ctx))
       .finally(() => {
         inflightEvents.delete(ctx)
       })
