@@ -40,6 +40,11 @@ describe('metric URL selection', () => {
     expect(urls(s)).toEqual(['https://proxy.example.com/cio/push/events'])
   })
 
+  test('a root-relative proxy in ?track= wins over the payload track_url', async () => {
+    const s = await push('/cio-track', eu)
+    expect(urls(s)).toEqual(['/cio-track/push/events'])
+  })
+
   test('our US host in ?track= loses to an EU payload track_url', async () => {
     const s = await push(us, eu)
     expect(urls(s)).toEqual([`${eu}/push/events`])
