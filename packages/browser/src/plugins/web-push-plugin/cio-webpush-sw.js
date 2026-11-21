@@ -226,7 +226,12 @@
   // encrypted payload's regional URL; otherwise fall back to `?track=`.
   function metricBase(payloadTrackUrl) {
     try {
-      if (trackUrl && !ownTrackHosts.includes(new URL(trackUrl).hostname))
+      // Resolve against the worker's URL, as runtimeUrl() does, so a
+      // root-relative first-party proxy such as `/cio-track` counts.
+      if (
+        trackUrl &&
+        !ownTrackHosts.includes(new URL(trackUrl, self.location.href).hostname)
+      )
         return trackUrl
     } catch {
       // An unparseable `?track=` is not a proxy.
