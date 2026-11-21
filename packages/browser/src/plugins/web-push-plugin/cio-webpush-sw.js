@@ -22,7 +22,7 @@
 // the workspace's own region; `?track=` is the fallback for older payloads.
 ;(function (install) {
   // scripts/build-prep.sh keeps this equal to the package version.
-  const version = '0.8.3'
+  const version = '0.8.4'
 
   // A hosted copy is importing this file as its runtime: offer this version to
   // it and install nothing. A breaking change to install's env needs a new
