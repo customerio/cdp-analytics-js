@@ -96,6 +96,17 @@ export interface AnalyticsCore extends CoreAnalytics {
    * @returns InboxAPI interface for managing inbox messages
    */
   inbox?(...topics: string[]): InboxAPI
+  /**
+   * Hands over the JWT the site's backend signed for the signed-in person, for
+   * the Customer.io In-App Plugin to send with its requests. `null` withdraws
+   * a JWT this page handed over; `reset()` signs the person out. Callable
+   * before the SDK has loaded: the JWT goes with the first request, unless a
+   * `reset()` is also waiting for the SDK to load, in which case it follows
+   * the reset. A rejected JWT reaches the plugin's `events` listener as
+   * `in-app:user-jwt-rejected`.
+   * @param jwt - The signed JWT, or null
+   */
+  setUserJwt?(jwt: string | null): void
 }
 
 /**

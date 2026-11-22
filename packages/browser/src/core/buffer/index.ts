@@ -31,6 +31,7 @@ export type PreInitMethodName =
   | 'addSourceMiddleware'
   | 'setAnonymousId'
   | 'addDestinationMiddleware'
+  | 'setUserJwt'
 
 // Union of all analytics methods that _do not_ return a Promise
 type SyncPreInitMethodName = {
@@ -68,6 +69,23 @@ export const flushSetAnonymousID = flushSyncAnalyticsCalls.bind(
   this,
   'setAnonymousId'
 )
+
+/**
+ * A JWT set before load has to reach the in-app plugin before the plugin
+ * starts gist-web, so its first request carries the JWT. A buffered reset()
+ * only replays after load, though, and would then clear a JWT handed over
+ * after it. So while the buffer holds a reset(), the JWT waits for the final
+ * flush, which replays it after the reset (see PreInitMethodCallBuffer).
+ */
+export const flushSetUserJwt = (
+  analytics: Analytics,
+  buffer: PreInitMethodCallBuffer
+): void => {
+  if (buffer.getCalls('reset').length > 0) {
+    return
+  }
+  flushSyncAnalyticsCalls('setUserJwt', analytics, buffer)
+}
 
 export const flushAnalyticsCallsInNewTask = (
   analytics: Analytics,
@@ -123,6 +141,9 @@ export class PreInitMethodCallBuffer {
 
   push(...calls: PreInitMethodCall[]): PreInitMethodCallBuffer {
     calls.forEach((call) => {
+      if (call.method === 'reset') {
+        this._dropUserJwtCalls()
+      }
       if (this._value[call.method]) {
         this._value[call.method]!.push(call)
       } else {
@@ -135,6 +156,23 @@ export class PreInitMethodCallBuffer {
   clear(): PreInitMethodCallBuffer {
     this._value = {} as MethodCallMap
     return this
+  }
+
+  /**
+   * A reset() signs the person out, so a user JWT handed over before it must
+   * not outlive it. Each method's calls replay together, in the order the
+   * methods were first called, so the JWT calls made before the reset are
+   * dropped here, and any made after it start a group that replays after it.
+   */
+  private _dropUserJwtCalls(): void {
+    const calls = this.getCalls('setUserJwt')
+    delete this._value.setUserJwt
+    calls.forEach((call) => {
+      if (!call.called) {
+        call.called = true
+        call.resolve()
+      }
+    })
   }
 }
 
@@ -247,6 +285,10 @@ export class AnalyticsBuffered
     }
     throw new Error('Customer.io In-App Plugin is not loaded yet. Ensure the plugin is initialized before calling inbox().')
   }
+  // Buffered like the methods above, never thrown like inbox(): a site hands
+  // over the JWT as soon as the person signs in, which is often while the SDK
+  // is still loading.
+  setUserJwt = this._createMethod('setUserJwt')
   readonly VERSION = version
 
   private _createMethod<T extends PreInitMethodName>(methodName: T) {

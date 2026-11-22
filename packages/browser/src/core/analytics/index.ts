@@ -48,6 +48,7 @@ import { version } from '../../generated/version'
 import { PriorityQueue } from '../../lib/priority-queue'
 import { getGlobal } from '../../lib/get-global'
 import { AnalyticsClassic, AnalyticsCore } from './interfaces'
+import { pendingUserJwts } from './pending-user-jwt'
 import { setGlobalAnalytics } from '../../lib/global-analytics-helper'
 
 const deprecationWarning =
@@ -376,6 +377,9 @@ export class Analytics
   reset(): void {
     this._user.reset()
     this._group.reset()
+    // Cleared before the in-app plugin hears about the reset, so a JWT handed
+    // over right after reset() is the one that stays.
+    pendingUserJwts.delete(this)
     this.emit('reset')
   }
 
@@ -435,6 +439,18 @@ export class Analytics
 
   setAnonymousId(id?: string): ID {
     return this._user.anonymousId(id)
+  }
+
+  /**
+   * Hands the in-app plugin the JWT the site's backend signed for the
+   * signed-in person, which gist-web sends with its requests to Gist. `null`
+   * withdraws a JWT this page handed over; `reset()` signs the person out.
+   * Until the plugin has loaded, the JWT is kept for it, and the plugin gives
+   * it to gist-web before its first request; the plugin replaces this method
+   * once it loads.
+   */
+  setUserJwt(jwt: string | null): void {
+    pendingUserJwts.set(this, jwt)
   }
 
   async queryString(query: string): Promise<Context[]> {

@@ -1,7 +1,7 @@
 import { Analytics } from '../../../core/analytics'
 import { pageEnrichment } from '../../page-enrichment'
 import { CustomerioSettings } from '../../customerio'
-import { InAppPlugin, InAppPluginSettings, InboxEvents } from '../'
+import { InAppEvents, InAppPlugin, InAppPluginSettings, InboxEvents } from '../'
 import Gist from 'customerio-gist-web'
 
 describe('Customer.io In-App Plugin', () => {
@@ -717,5 +717,60 @@ describe('Customer.io In-App Plugin', () => {
       error.mockRestore()
     })
 
+  })
+
+  describe('User JWT rejections', () => {
+    let gistUserJwtRejected: Function | undefined
+
+    beforeEach(() => {
+      gistUserJwtRejected = undefined
+      Gist.events = {
+        on: jest.fn((name: string, cb: Function) => {
+          if (name === 'userJwtRejected') {
+            gistUserJwtRejected = cb
+          }
+        }),
+        off: jest.fn(),
+        dispatch: jest.fn(),
+      } as unknown as typeof Gist.events
+    })
+
+    const loadPage = async (events: EventListener) => {
+      const page = new Analytics({ writeKey: 'foo' })
+      await page.register(
+        InAppPlugin({ siteId: 'siteid', events } as InAppPluginSettings)
+      )
+      return page
+    }
+
+    it("delivers gist-web's userJwtRejected to the events listener with its reason", async () => {
+      const events = jest.fn()
+      await loadPage(events)
+
+      gistUserJwtRejected!({ reason: 'expired' })
+
+      expect(events).toHaveBeenCalledTimes(1)
+      const event = events.mock.calls[0][0] as CustomEvent
+      expect(event.type).toBe(InAppEvents.UserJwtRejected)
+      expect(event.type).toBe('in-app:user-jwt-rejected')
+      expect(event.detail).toEqual({ reason: 'expired' })
+    })
+
+    it('delivers a rejection that arrives while the plugin syncs the user at load', async () => {
+      // gist-web's first request leaves inside setup(), so its rejection can be
+      // handled while the load-time sync is still waiting on gist-web. The
+      // visitor isn't identified, so that sync is a clearUserToken() call.
+      Gist.clearUserToken = jest.fn(async () => {
+        gistUserJwtRejected?.({ reason: 'missing' })
+      })
+      const events = jest.fn()
+
+      await loadPage(events)
+
+      expect(events).toHaveBeenCalledTimes(1)
+      expect((events.mock.calls[0][0] as CustomEvent).detail).toEqual({
+        reason: 'missing',
+      })
+    })
   })
 })

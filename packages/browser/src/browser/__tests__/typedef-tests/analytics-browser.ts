@@ -148,4 +148,16 @@ export default {
       },
     })
   },
+
+  'setUserJwt should take a JWT or null, before load and after': async () => {
+    const browser = AnalyticsBrowser.load({ writeKey: 'foo' })
+    void browser.setUserJwt('jwt')
+    void browser.setUserJwt(null)
+    // @ts-expect-error - Argument of type 'number' is not assignable to parameter of type 'string | null'
+    void browser.setUserJwt(42)
+
+    const [analytics] = await browser
+    analytics.setUserJwt('jwt')
+    analytics.setUserJwt(null)
+  },
 }
