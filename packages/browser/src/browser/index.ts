@@ -24,6 +24,7 @@ import {
   flushSetUserJwt,
 } from '../core/buffer'
 import { popSnippetWindowBuffer } from '../core/buffer/snippet'
+import { pendingUserJwtCatchUps } from '../core/analytics/pending-user-jwt'
 import { ClassicIntegrationSource } from '../plugins/ajs-destination/types'
 import { attachInspector } from '../core/inspector'
 import { Stats } from '../core/stats'
@@ -129,7 +130,9 @@ function hasTsubMiddleware(settings: LegacySettings): boolean {
  * This is important so users can register to 'initialize' and any events that may fire early during setup.
  *
  * A user JWT set before initialization is replayed here too, so the in-app plugin can give it to
- * gist-web before gist-web's first request. Snippet calls land in the same buffer.
+ * gist-web before gist-web's first request. Snippet calls land in the same buffer. Plugins load
+ * after this flush, so the in-app plugin catches up on the JWT calls made meanwhile just before it
+ * starts gist-web.
  */
 function flushPreBuffer(
   analytics: Analytics,
@@ -139,6 +142,10 @@ function flushPreBuffer(
   flushSetAnonymousID(analytics, buffer)
   flushOn(analytics, buffer)
   flushSetUserJwt(analytics, buffer)
+  pendingUserJwtCatchUps.set(analytics, () => {
+    buffer.push(...popSnippetWindowBuffer())
+    flushSetUserJwt(analytics, buffer)
+  })
 }
 
 /**

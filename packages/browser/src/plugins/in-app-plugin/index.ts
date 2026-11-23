@@ -16,7 +16,10 @@ import Gist, {
   type ColorScheme,
   type EmbedPayload,
 } from 'customerio-gist-web'
-import { pendingUserJwts } from '../../core/analytics/pending-user-jwt'
+import {
+  pendingUserJwts,
+  pendingUserJwtCatchUps,
+} from '../../core/analytics/pending-user-jwt'
 import type { InboxAPI, InboxMessage, GistInboxMessage, InboxActionConfig, InboxMessageActionParams } from './inbox_messages'
 import { createInboxAPI } from './inbox_messages'
 
@@ -399,24 +402,26 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         return ctx
       }
 
+      await setAnonymousId()
+
       // An embed-only host signs nobody in, and gist-web would store a JWT it
       // gets before setup without letting this page clear it afterwards, so
-      // the JWT stays with the SDK there. Elsewhere, calls from here on go
-      // straight to gist-web, which takes a JWT before its setup too.
+      // the JWT stays with the SDK there. Elsewhere, the page's JWT goes to
+      // gist-web before setup, so its first request carries it, counting the
+      // calls made while plugins loaded. Calls from here on go straight to
+      // gist-web.
       let pendingUserJwt: string | null | undefined
       if (!settings.embedOnly) {
+        pendingUserJwtCatchUps.get(instance)?.()
+        pendingUserJwtCatchUps.delete(instance)
         pendingUserJwt = pendingUserJwts.get(instance)
         pendingUserJwts.delete(instance)
         instance.setUserJwt = (jwt: string | null): void => {
           void handOverUserJwt(jwt)
         }
-      }
-
-      await setAnonymousId()
-
-      // Before setup, so gist-web's first request carries the JWT.
-      if (pendingUserJwt !== undefined) {
-        await handOverUserJwt(pendingUserJwt)
+        if (pendingUserJwt !== undefined) {
+          await handOverUserJwt(pendingUserJwt)
+        }
       }
 
       await Gist.setup({

@@ -88,6 +88,47 @@ describe('analytics.setUserJwt', () => {
     expect(gistCalls.slice(0, 2)).toEqual(['setUserJwt t', 'setup'])
   })
 
+  // The plugin calls Gist.setCustomAttribute while it loads, after the
+  // pre-load flush and before Gist.setup().
+  it('gives gist-web a JWT handed over while plugins load, before setup', async () => {
+    const analytics = AnalyticsBrowser.load({ writeKey: 'foo' })
+    jest.mocked(Gist.setCustomAttribute).mockImplementationOnce(() => {
+      void analytics.setUserJwt('t')
+      return true
+    })
+    await analytics
+
+    expect(gistCalls).toEqual(['setUserJwt t', 'setup'])
+  })
+
+  it('gives gist-web a JWT a snippet page buffers while plugins load, before setup', async () => {
+    const snippet: unknown[] = []
+    ;(window as any).analytics = snippet
+    jest.mocked(Gist.setCustomAttribute).mockImplementationOnce(() => {
+      snippet.push(['setUserJwt', 't'])
+      return true
+    })
+
+    await AnalyticsBrowser.load({ writeKey: 'foo' })
+
+    expect(gistCalls.slice(0, 2)).toEqual(['setUserJwt t', 'setup'])
+  })
+
+  it("doesn't give gist-web a JWT the page signed out of while plugins load", async () => {
+    const analytics = AnalyticsBrowser.load({ writeKey: 'foo' })
+    void analytics.setUserJwt('t')
+    let signedOut: Promise<unknown> | undefined
+    jest.mocked(Gist.setCustomAttribute).mockImplementationOnce(() => {
+      signedOut = analytics.reset()
+      return true
+    })
+    await analytics
+    await signedOut
+
+    expect(gistCalls).not.toContain('setUserJwt t')
+    expect(gistJwt).toBeNull()
+  })
+
   it('keeps the JWT of a visitor who identifies and hands it over while the SDK loads', async () => {
     // Nobody is identified at load, so the plugin's load-time sync would sign
     // gist-web out after the JWT was handed over, and identify() replays later.

@@ -6,3 +6,11 @@
  * `window.cioanalytics`. A stored null means the page withdrew its JWT.
  */
 export const pendingUserJwts = new WeakMap<object, string | null>()
+
+/**
+ * Per Analytics instance while it loads: brings `pendingUserJwts` up to date
+ * with the setUserJwt() and reset() calls the page made after the pre-load
+ * flush, while plugins were still loading. The in-app plugin runs it right
+ * before it starts gist-web.
+ */
+export const pendingUserJwtCatchUps = new WeakMap<object, () => void>()

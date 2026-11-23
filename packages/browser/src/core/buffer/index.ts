@@ -3,6 +3,7 @@ import { Context } from '../context'
 import { isThenable } from '../../lib/is-thenable'
 import { AnalyticsBrowserCore } from '../analytics/interfaces'
 import { version } from '../../generated/version'
+import { pendingUserJwts } from '../analytics/pending-user-jwt'
 
 /**
  * The names of any AnalyticsBrowser methods that also exist on Analytics
@@ -75,13 +76,16 @@ export const flushSetAnonymousID = flushSyncAnalyticsCalls.bind(
  * starts gist-web, so its first request carries the JWT. A buffered reset()
  * only replays after load, though, and would then clear a JWT handed over
  * after it. So while the buffer holds a reset(), the JWT waits for the final
- * flush, which replays it after the reset (see PreInitMethodCallBuffer).
+ * flush, which replays it after the reset (see PreInitMethodCallBuffer), and
+ * a JWT taken from the buffer earlier is dropped: the page signed out after
+ * handing it over.
  */
 export const flushSetUserJwt = (
   analytics: Analytics,
   buffer: PreInitMethodCallBuffer
 ): void => {
   if (buffer.getCalls('reset').length > 0) {
+    pendingUserJwts.delete(analytics)
     return
   }
   flushSyncAnalyticsCalls('setUserJwt', analytics, buffer)
