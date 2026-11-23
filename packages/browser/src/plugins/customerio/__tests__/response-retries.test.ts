@@ -105,10 +105,13 @@ describe('retrying requests the API did not accept', () => {
     test('stops retrying at the attempt limit, backing off between attempts', async () => {
       jest.mocked(unfetch).mockImplementation(() => respond(500))
 
-      await analytics.track('event')
+      const ctx = await analytics.track('event')
       const queue = retryQueue()
       // The first retry is queued straight away; later ones wait out a backoff.
       expect(queue.length).toBe(1)
+      expect(ctx.logs().map((l) => l.message)).not.toContain(
+        'Dropped after the last delivery attempt'
+      )
 
       jest.useFakeTimers()
       for (let retry = 1; retry <= queue.maxAttempts; retry++) {
@@ -122,6 +125,9 @@ describe('retrying requests the API did not accept', () => {
       // One send, then one retry for each attempt the queue allows.
       expect(unfetch).toHaveBeenCalledTimes(1 + queue.maxAttempts)
       expect(queue.todo).toBe(0)
+      expect(ctx.logs().map((l) => l.message)).toContain(
+        'Dropped after the last delivery attempt'
+      )
     })
 
     test('a retry left at page exit is sent on the next load with the same messageId', async () => {

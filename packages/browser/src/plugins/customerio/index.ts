@@ -101,7 +101,14 @@ export function customerio(
   function retry(ctx: Context): Context {
     if (supersession.stale(ctx)) return ctx
     if (isDeviceEvent(ctx)) analytics.emit(deviceDeliveryEvent, ctx)
-    buffer.pushWithBackoff(ctx)
+    if (
+      !buffer.pushWithBackoff(ctx) &&
+      buffer.getAttempts(ctx) > buffer.maxAttempts
+    ) {
+      ctx.log('debug', 'Dropped after the last delivery attempt', {
+        attempts: buffer.getAttempts(ctx),
+      })
+    }
     // eslint-disable-next-line @typescript-eslint/no-use-before-define
     scheduleFlush(flushing, buffer, customerio, scheduleFlush)
     return ctx
