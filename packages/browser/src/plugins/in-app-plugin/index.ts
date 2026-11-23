@@ -368,16 +368,13 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
     return ctx
   }
 
-  async function syncUserToken(
-    ctx: Context,
-    keepUserJwt = false
-  ): Promise<Context> {
+  async function syncUserToken(ctx: Context): Promise<Context> {
     if (!_gistLoaded) return ctx
 
     const user = _analytics.user().id()
     if (typeof user === 'string' && user.length > 0) {
       await Gist.setUserToken(user)
-    } else if (!keepUserJwt) {
+    } else {
       await Gist.clearUserToken()
     }
     return ctx
@@ -435,10 +432,15 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
       _gistLoaded = true
       listenForUserJwtRejections()
 
-      // For a visitor not identified yet, this sync signs gist-web out, which
-      // would drop a JWT handed over before load. The visitor's identify()
-      // replays after load, and gist-web keeps the JWT's person as the user.
-      await syncUserToken(ctx, pendingUserJwt != null)
+      // For a visitor not identified yet, this sync signs out whoever gist-web
+      // had stored, along with the JWT handed over before setup, so that JWT
+      // goes back. For an identified visitor, gist-web already holds it and
+      // the hand-over changes nothing. The visitor's identify() replays after
+      // load, and gist-web keeps the JWT's person as the user.
+      await syncUserToken(ctx)
+      if (pendingUserJwt != null) {
+        await handOverUserJwt(pendingUserJwt)
+      }
       attachListeners()
       ;(instance as any).inbox = (...topics: string[]): InboxAPI => {
         if (!_pluginLoaded) {

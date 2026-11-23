@@ -61,7 +61,14 @@ describe('analytics.setUserJwt', () => {
     expect(() => analytics.setUserJwt('t')).not.toThrow()
     await analytics
 
-    expect(gistCalls).toEqual(['setUserJwt t', 'setup'])
+    // Nobody is identified yet, so the load-time sync signs out whoever
+    // gist-web had stored, and the JWT goes back.
+    expect(gistCalls).toEqual([
+      'setUserJwt t',
+      'setup',
+      'clearUserToken',
+      'setUserJwt t',
+    ])
     expect(gistJwt).toBe('t')
   })
 
@@ -74,7 +81,12 @@ describe('analytics.setUserJwt', () => {
     void analytics.setUserJwt('t')
     await analytics
 
-    expect(gistCalls).toEqual(['setUserJwt t', 'setup', 'setUserToken bob'])
+    expect(gistCalls).toEqual([
+      'setUserJwt t',
+      'setup',
+      'setUserToken bob',
+      'setUserJwt t',
+    ])
     expect(gistJwt).toBe('t')
   })
 
@@ -98,7 +110,8 @@ describe('analytics.setUserJwt', () => {
     })
     await analytics
 
-    expect(gistCalls).toEqual(['setUserJwt t', 'setup'])
+    expect(gistCalls.slice(0, 2)).toEqual(['setUserJwt t', 'setup'])
+    expect(gistJwt).toBe('t')
   })
 
   it('gives gist-web a JWT a snippet page buffers while plugins load, before setup', async () => {
@@ -254,7 +267,7 @@ describe('analytics.setUserJwt', () => {
     expect(Gist.setUserJwt).not.toHaveBeenCalled()
   })
 
-  it("loads, logging each hand-over, when the page's gist-web has no setUserJwt", async () => {
+  it("loads, logging each hand-over and signing the last visitor out, when the page's gist-web has no setUserJwt", async () => {
     // An older gist-web that loaded first wins window.Gist.
     ;(Gist as any).setUserJwt = undefined
     const consoleError = jest
@@ -270,7 +283,8 @@ describe('analytics.setUserJwt', () => {
       instance.queue.plugins.find((p) => p.name === inAppPluginName)
     ).toBeDefined()
     expect(Gist.setup).toHaveBeenCalled()
-    expect(consoleError).toHaveBeenCalledTimes(2)
+    expect(Gist.clearUserToken).toHaveBeenCalled()
+    expect(consoleError).toHaveBeenCalledTimes(3)
     for (const [message] of consoleError.mock.calls) {
       expect(message).toContain('Failed to hand over the user JWT')
     }
