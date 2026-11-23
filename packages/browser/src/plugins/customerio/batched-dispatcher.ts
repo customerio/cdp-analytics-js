@@ -1,6 +1,7 @@
 import { CustomerioEvent } from '../../core/events'
 import { fetch } from '../../lib/fetch'
 import { onPageLeave } from '../../lib/on-page-leave'
+import { isRetryableStatus } from './fetch-dispatcher'
 
 export type BatchingDispatchConfig = {
   size?: number
@@ -46,6 +47,9 @@ function chunks(batch: object[]): Array<object[]> {
 export default function batch(remote: string, config?: BatchingDispatchConfig) {
   let buffer: object[] = []
   let pageUnloaded = false
+  // `dispatch` resolves before the batch is sent, so a failed batch reports
+  // each of its events through the `onRetry` callback given with that event.
+  const retries = new WeakMap<object, () => void>()
 
   const limit = config?.size ?? 10
   const timeout = config?.timeout ?? 5000
@@ -65,6 +69,21 @@ export default function batch(remote: string, config?: BatchingDispatchConfig) {
       method: 'post',
       body: JSON.stringify({ batch, writeKey }),
     })
+      .then((res) => {
+        if (isRetryableStatus(res.status)) {
+          throw new Error(`Retryable response from server: ${res.status}`)
+        }
+        batch.forEach((event) => retries.delete(event))
+      })
+      .catch(() => {
+        // The API answers for the whole batch, so every event in it is retried.
+        // Each callback is removed before it runs, so it runs at most once.
+        batch.forEach((event) => {
+          const onRetry = retries.get(event)
+          retries.delete(event)
+          onRetry?.()
+        })
+      })
   }
 
   async function flush(): Promise<unknown> {
@@ -91,13 +110,27 @@ export default function batch(remote: string, config?: BatchingDispatchConfig) {
   onPageLeave(() => {
     pageUnloaded = true
 
+    // Take the events out of the buffer, as `flush` does, so the scheduled
+    // flush can't send them a second time after a tab is hidden.
+    if (schedule) {
+      clearTimeout(schedule)
+      schedule = undefined
+    }
+
     if (buffer.length) {
-      const reqs = chunks(buffer).map(sendBatch)
+      const pending = buffer
+      buffer = []
+      const reqs = chunks(pending).map(sendBatch)
       Promise.all(reqs).catch(console.error)
     }
   })
 
-  async function dispatch(_url: string, body: object): Promise<unknown> {
+  async function dispatch(
+    _url: string,
+    body: object,
+    onRetry?: () => void
+  ): Promise<unknown> {
+    if (onRetry) retries.set(body, onRetry)
     buffer.push(body)
 
     const bufferOverflow =
