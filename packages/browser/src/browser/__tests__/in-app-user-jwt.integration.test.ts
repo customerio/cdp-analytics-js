@@ -213,7 +213,7 @@ describe('analytics.setUserJwt', () => {
     expect(Gist.setUserJwt).not.toHaveBeenCalled()
   })
 
-  it("loads, with one console error, when the page's gist-web has no setUserJwt", async () => {
+  it("loads, logging each hand-over, when the page's gist-web has no setUserJwt", async () => {
     // An older gist-web that loaded first wins window.Gist.
     ;(Gist as any).setUserJwt = undefined
     const consoleError = jest
@@ -229,7 +229,9 @@ describe('analytics.setUserJwt', () => {
       instance.queue.plugins.find((p) => p.name === inAppPluginName)
     ).toBeDefined()
     expect(Gist.setup).toHaveBeenCalled()
-    expect(consoleError).toHaveBeenCalledTimes(1)
-    expect(consoleError.mock.calls[0][0]).toContain('has no setUserJwt')
+    expect(consoleError).toHaveBeenCalledTimes(2)
+    for (const [message] of consoleError.mock.calls) {
+      expect(message).toContain('Failed to hand over the user JWT')
+    }
   })
 })

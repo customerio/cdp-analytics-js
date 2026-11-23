@@ -115,24 +115,14 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
   let _analytics: Analytics
   let _gistLoaded = false
   let _pluginLoaded = false
-  let _reportedMissingSetUserJwt = false
   const _eventTarget: EventTarget = new EventTarget()
 
   /**
-   * Gives gist-web the page's JWT, and never throws: when an older gist-web
-   * loaded first and won `window.Gist`, it has no setUserJwt, and the SDK has
-   * to keep working without the JWT.
+   * Gives gist-web the page's JWT, and never throws, since a throw here fails
+   * the whole SDK load. When an older gist-web loaded first, gist-web hands
+   * this plugin that copy (`window.Gist`), which has no setUserJwt.
    */
   async function handOverUserJwt(jwt: string | null): Promise<void> {
-    if (typeof Gist.setUserJwt !== 'function') {
-      if (!_reportedMissingSetUserJwt) {
-        _reportedMissingSetUserJwt = true
-        _error(
-          "The gist-web on this page has no setUserJwt, so in-app requests can't carry the user JWT. An older copy of gist-web may have loaded first."
-        )
-      }
-      return
-    }
     try {
       await Gist.setUserJwt(jwt)
     } catch (error) {
