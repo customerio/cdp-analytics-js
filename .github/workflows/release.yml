@@ -105,7 +105,7 @@ jobs:
           payload: |
             {
               "text": "Analytics JS SDK ${{ steps.version.outputs.version }} published to npm",
-              "channel": "#mobile-deployments",
+              "channel": "#server-sdk-deployments",
               "blocks": [
                 {
                   "type": "section",
@@ -126,7 +126,7 @@ jobs:
           payload: |
             {
               "text": "Analytics JS SDK release failure",
-              "channel": "#mobile-deployments",
+              "channel": "#server-sdk-deployments",
               "blocks": [
                 {
                   "type": "section",
