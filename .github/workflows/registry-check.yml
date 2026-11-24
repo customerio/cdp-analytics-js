@@ -81,6 +81,8 @@ jobs:
           payload: |
             {
               "text": "Analytics JS SDK ${{ steps.version.outputs.version }} is missing from npm",
+              "username": "Analytics JS deployment bot",
+              "icon_url": "https://raw.githubusercontent.com/github/explore/main/topics/javascript/javascript.png",
               "channel": "#server-sdk-deployments",
               "blocks": [
                 {
