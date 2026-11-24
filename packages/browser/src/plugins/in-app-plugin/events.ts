@@ -3,6 +3,7 @@ export enum InAppEvents {
     MessageDismissed =  'in-app:message-dismissed',
     MessageError = 'in-app:message-error',
     MessageAction = 'in-app:message-action',
+    UserJwtRejected = 'in-app:user-jwt-rejected',
 }
 
 export enum InboxEvents {

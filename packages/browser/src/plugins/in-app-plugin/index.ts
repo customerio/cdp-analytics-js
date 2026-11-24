@@ -16,6 +16,10 @@ import Gist, {
   type ColorScheme,
   type EmbedPayload,
 } from 'customerio-gist-web'
+import {
+  pendingUserJwts,
+  pendingUserJwtCatchUps,
+} from '../../core/analytics/pending-user-jwt'
 import type { InboxAPI, InboxMessage, GistInboxMessage, InboxActionConfig, InboxMessageActionParams } from './inbox_messages'
 import { createInboxAPI } from './inbox_messages'
 
@@ -115,6 +119,33 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
   let _gistLoaded = false
   let _pluginLoaded = false
   const _eventTarget: EventTarget = new EventTarget()
+
+  /**
+   * Gives gist-web the page's JWT, and never throws, since a throw here fails
+   * the whole SDK load. When an older gist-web loaded first, gist-web hands
+   * this plugin that copy (`window.Gist`), which has no setUserJwt.
+   */
+  async function handOverUserJwt(jwt: string | null): Promise<void> {
+    try {
+      await Gist.setUserJwt(jwt)
+    } catch (error) {
+      _error(`Failed to hand over the user JWT: ${String(error)}`)
+    }
+  }
+
+  // Attached as soon as Gist.setup() resolves, before the load-time user sync
+  // awaits gist-web: the first queue request leaves inside setup(), and
+  // gist-web reports each JWT's rejection only once.
+  function listenForUserJwtRejections() {
+    if (!settings.events) return
+
+    _eventTarget.addEventListener(InAppEvents.UserJwtRejected, settings.events)
+    Gist.events.on('userJwtRejected', (rejection: any) => {
+      _eventTarget.dispatchEvent(
+        newEvent(InAppEvents.UserJwtRejected, { reason: rejection?.reason })
+      )
+    })
+  }
 
   async function setAnonymousId() {
     const anonymousId = _analytics.user().anonymousId()
@@ -370,6 +401,26 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
 
       await setAnonymousId()
 
+      // An embed-only host signs nobody in, and gist-web would store a JWT it
+      // gets before setup without letting this page clear it afterwards, so
+      // the JWT stays with the SDK there. Elsewhere, the page's JWT goes to
+      // gist-web before setup, so its first request carries it, counting the
+      // calls made while plugins loaded. Calls from here on go straight to
+      // gist-web.
+      let pendingUserJwt: string | null | undefined
+      if (!settings.embedOnly) {
+        pendingUserJwtCatchUps.get(instance)?.()
+        pendingUserJwtCatchUps.delete(instance)
+        pendingUserJwt = pendingUserJwts.get(instance)
+        pendingUserJwts.delete(instance)
+        instance.setUserJwt = (jwt: string | null): void => {
+          void handOverUserJwt(jwt)
+        }
+        if (pendingUserJwt !== undefined) {
+          await handOverUserJwt(pendingUserJwt)
+        }
+      }
+
       await Gist.setup({
         siteId: settings.siteId ?? '',
         env: settings._env ? settings._env : 'prod',
@@ -379,8 +430,17 @@ export function InAppPlugin(settings: InAppPluginSettings): Plugin {
         embedOnly: settings.embedOnly,
       })
       _gistLoaded = true
+      listenForUserJwtRejections()
 
+      // For a visitor not identified yet, this sync signs out whoever gist-web
+      // had stored, along with the JWT handed over before setup, so that JWT
+      // goes back. For an identified visitor, gist-web already holds it and
+      // the hand-over changes nothing. The visitor's identify() replays after
+      // load, and gist-web keeps the JWT's person as the user.
       await syncUserToken(ctx)
+      if (pendingUserJwt != null) {
+        await handOverUserJwt(pendingUserJwt)
+      }
       attachListeners()
       ;(instance as any).inbox = (...topics: string[]): InboxAPI => {
         if (!_pluginLoaded) {
