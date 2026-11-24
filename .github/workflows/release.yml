@@ -105,6 +105,8 @@ jobs:
           payload: |
             {
               "text": "Analytics JS SDK ${{ steps.version.outputs.version }} published to npm",
+              "username": "Analytics JS deployment bot",
+              "icon_url": "https://raw.githubusercontent.com/github/explore/main/topics/javascript/javascript.png",
               "channel": "#server-sdk-deployments",
               "blocks": [
                 {
@@ -126,6 +128,8 @@ jobs:
           payload: |
             {
               "text": "Analytics JS SDK release failure",
+              "username": "Analytics JS deployment bot",
+              "icon_url": "https://raw.githubusercontent.com/github/explore/main/topics/javascript/javascript.png",
               "channel": "#server-sdk-deployments",
               "blocks": [
                 {
