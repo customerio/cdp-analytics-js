@@ -275,7 +275,9 @@ jobs:
   notify-failure:
     runs-on: ubuntu-latest
     needs: [npm, github, commit]
-    if: ${{ failure() && github.event.inputs.dry-run == 'false' }}
+    # always() keeps this job from being skipped when `commit` is skipped
+    # because a publish job failed.
+    if: ${{ always() && contains(needs.*.result, 'failure') && github.event.inputs.dry-run == 'false' }}
     permissions: {}
     env:
       # Secrets can't be read in a step `if`, so the Slack step tests this copy.
