@@ -28,6 +28,10 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    env:
+      # Secrets can't be read in a step `if`, so the Slack steps test this copy.
+      # While the secret is unset, both notices are skipped.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_NOTIFY_SERVER_SDK_RELEASES_WEBHOOK_URL }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -86,6 +90,53 @@ jobs:
             npm publish --access public
             popd
           done
+
+      - name: Read the published version
+        id: version
+        if: ${{ github.event.inputs.dry-run == 'false' }}
+        run: echo "version=$(jq -r .version packages/browser/package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Slack of the published version
+        if: ${{ success() && github.event.inputs.dry-run == 'false' && env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v2.0.0-rc.3
+        with:
+          webhook: ${{ env.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "Analytics JS SDK ${{ steps.version.outputs.version }} published to npm",
+              "channel": "#server-sdk-deployments",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Analytics JS* SDK ${{ steps.version.outputs.version }} published to npm. <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+                  }
+                }
+              ]
+            }
+
+      - name: Notify Slack of a failed release
+        if: ${{ failure() && github.event.inputs.dry-run == 'false' && env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v2.0.0-rc.3
+        with:
+          webhook: ${{ env.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "Analytics JS SDK release failure",
+              "channel": "#server-sdk-deployments",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Analytics JS* SDK release :warning: failure :warning:\nView the <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|run logs> to see why."
+                  }
+                }
+              ]
+            }
 
   github:
     runs-on: ubuntu-latest
