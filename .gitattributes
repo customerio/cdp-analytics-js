@@ -1,1 +1,3 @@
 * text=auto
+# Vendored destination bundles are hashed byte for byte (PIN-1029).
+packages/browser/vendor/** -text
