@@ -1,7 +1,7 @@
 name: Registry check
 
-# Release runs publish to npm first and then push the new version to a
-# release/version-bump-<run id> branch, so this reads the version from there.
+# Release runs publish to npm first and then open a version bump PR from a
+# release/version-bump-<run id> branch, so this reads the version from that PR.
 on:
   workflow_run:
     workflows: [Release]
@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   registry-check:
@@ -41,9 +42,17 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             version="${VERSION_INPUT#v}"
           else
+            # The branch is deleted when the bump PR merges, but the PR keeps its
+            # head commit, so a late or retried check still finds the version.
+            ref=$(gh api -X GET "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f head="${GITHUB_REPOSITORY_OWNER}:${BUMP_REF}" -f state=all \
+              --jq '.[0].head.sha // empty' || true)
+            if ! printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+              ref="$BUMP_REF"
+            fi
             version=$(gh api -H 'Accept: application/vnd.github.raw+json' \
               -X GET "repos/${GITHUB_REPOSITORY}/contents/packages/browser/package.json" \
-              -f ref="$BUMP_REF" | jq -r .version)
+              -f ref="$ref" | jq -r .version || true)
           fi
           if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
             echo "::error::Could not read a valid version, got '$version'"
@@ -73,7 +82,7 @@ jobs:
           exit 1
 
       - name: Alert Slack that the version is missing
-        if: ${{ failure() && steps.version.outputs.version != '' && env.SLACK_WEBHOOK_URL != '' }}
+        if: ${{ failure() && env.SLACK_WEBHOOK_URL != '' }}
         uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         continue-on-error: true
         with:
@@ -81,7 +90,7 @@ jobs:
           webhook-type: incoming-webhook
           payload: |
             {
-              "text": "Analytics JS SDK ${{ steps.version.outputs.version }} is missing from npm",
+              "text": "Analytics JS SDK ${{ steps.version.outputs.version || '(version not found)' }} is missing from npm",
               "username": "Analytics JS deployment bot",
               "icon_url": "https://raw.githubusercontent.com/github/explore/main/topics/javascript/javascript.png",
               "channel": "#server-sdk-deployments",
@@ -90,7 +99,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Analytics JS* SDK ${{ steps.version.outputs.version }} is missing from npm :warning:\nThe release run finished but the version has not reached the registry after 50 minutes. View the <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|run logs>."
+                    "text": "*Analytics JS* SDK ${{ steps.version.outputs.version || '(version not found)' }} is missing from npm :warning:\nThe release run finished but the check could not confirm the version on the registry. View the <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|run logs>."
                   }
                 }
               ]
