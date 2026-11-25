@@ -798,7 +798,7 @@ __metadata:
     mime: ^2.4.6
     node-fetch: ^2.6.7
     node-gyp: ^9.0.0
-    playwright: ^1.55.1
+    playwright: ^1.64.1
     serve-handler: ^6.1.7
     size-limit: ^7.0.8
     spark-md5: ^3.0.1
@@ -917,7 +917,7 @@ __metadata:
   dependencies:
     "@customerio/cdp-analytics-browser": "workspace:^"
     "@internal/config": "workspace:^"
-    "@playwright/test": ^1.55.1
+    "@playwright/test": ^1.64.1
     http-server: 14.1.1
     nock: ^13.2.9
     tslib: ^2.4.1
@@ -1528,14 +1528,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@playwright/test@npm:^1.55.1":
-  version: 1.61.1
-  resolution: "@playwright/test@npm:1.61.1"
+"@playwright/test@npm:^1.64.1":
+  version: 1.64.1
+  resolution: "@playwright/test@npm:1.64.1"
   dependencies:
-    playwright: 1.61.1
+    playwright: 1.64.1
   bin:
     playwright: cli.js
-  checksum: cf664aa3f5ccc63061ec8a96cf957ad2160b0a300035b310b9fcf67da43f52681fb775755c6134230e0ace7b391a08d9cfe7ca9664546d1bb5d4cf02e1db170a
+  checksum: 971aeb35bc50293984a5e1fa0d4f40be27fb845898edf0a6a6fa2bbd28aee0c1416f70149971ac09644784b873a7aa0cc24d002a4ffb7e1e34602b4736f043b0
   languageName: node
   linkType: hard
 
@@ -6818,7 +6818,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"fsevents@npm:2.3.2, fsevents@npm:^2.3.2, fsevents@npm:~2.3.2":
+"fsevents@npm:^2.3.2, fsevents@npm:~2.3.2":
   version: 2.3.2
   resolution: "fsevents@npm:2.3.2"
   dependencies:
@@ -6828,7 +6828,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"fsevents@patch:fsevents@2.3.2#~builtin<compat/fsevents>, fsevents@patch:fsevents@^2.3.2#~builtin<compat/fsevents>, fsevents@patch:fsevents@~2.3.2#~builtin<compat/fsevents>":
+"fsevents@patch:fsevents@^2.3.2#~builtin<compat/fsevents>, fsevents@patch:fsevents@~2.3.2#~builtin<compat/fsevents>":
   version: 2.3.2
   resolution: "fsevents@patch:fsevents@npm%3A2.3.2#~builtin<compat/fsevents>::version=2.3.2&hash=18f3a7"
   dependencies:
@@ -10248,27 +10248,23 @@ __metadata:
   languageName: node
   linkType: hard
 
-"playwright-core@npm:1.61.1":
-  version: 1.61.1
-  resolution: "playwright-core@npm:1.61.1"
+"playwright-core@npm:1.64.1":
+  version: 1.64.1
+  resolution: "playwright-core@npm:1.64.1"
   bin:
     playwright-core: cli.js
-  checksum: 69bd5c4eb1884a16e92674c0399ad25120ce91faecadd25227cb07eaa0892cce07f908c6bad51256363bf17634953759c30d42d7c253128c28bc8b86087a1f62
+  checksum: 614007bcdeaad5c6ff46465b623a81e0dbcae060f04022ba37e325d10c2eb618a9b70c44da2eb7b0857c80f83fca6db73c53f0600dcdf1d922c7942af1e0b701
   languageName: node
   linkType: hard
 
-"playwright@npm:1.61.1, playwright@npm:^1.55.1":
-  version: 1.61.1
-  resolution: "playwright@npm:1.61.1"
+"playwright@npm:1.64.1, playwright@npm:^1.64.1":
+  version: 1.64.1
+  resolution: "playwright@npm:1.64.1"
   dependencies:
-    fsevents: 2.3.2
-    playwright-core: 1.61.1
-  dependenciesMeta:
-    fsevents:
-      optional: true
+    playwright-core: 1.64.1
   bin:
     playwright: cli.js
-  checksum: 2d85be1b6a88dbeeb206c5800629182840f07bd0e5e74f154fa57de2f1df16631918df9139a1cb8ddde8f2f125c5c9e447686a0fdadb61552b668ba97ffcaaf1
+  checksum: 74861fdf4087b6d4c33dce1779c977390591d4e76bb590a904018b3823d35b20737b3b8f8bddf8bf32969953b1e9a37f72ab3e33b4b1cebed4b1bcc4a5e62738
   languageName: node
   linkType: hard
 
