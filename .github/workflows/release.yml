@@ -28,6 +28,10 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    env:
+      # Secrets can't be read in a step `if`, so the Slack step tests this copy.
+      # While the secret is unset, the notice is skipped.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_NOTIFY_RELEASES_WEBHOOK_URL }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -86,6 +90,36 @@ jobs:
             npm publish --access public
             popd
           done
+
+      - name: Read the published version
+        id: version
+        if: ${{ github.event.inputs.dry-run == 'false' }}
+        continue-on-error: true
+        run: echo "version=$(jq -r .version packages/browser/package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Slack of the published version
+        if: ${{ success() && github.event.inputs.dry-run == 'false' && env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        continue-on-error: true
+        with:
+          webhook: ${{ env.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "Analytics JS SDK ${{ steps.version.outputs.version }} published to npm",
+              "username": "Analytics JS deployment bot",
+              "icon_url": "https://raw.githubusercontent.com/github/explore/main/topics/javascript/javascript.png",
+              "channel": "#server-sdk-deployments",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Analytics JS* SDK ${{ steps.version.outputs.version }} published to npm. <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+                  }
+                }
+              ]
+            }
 
   github:
     runs-on: ubuntu-latest
@@ -235,3 +269,42 @@ jobs:
             echo "::error::Could not queue the version bump PR. Approve and merge it manually: $pr_url"
             exit 1
           fi
+
+  # One notice for any failed job: a failed `commit` leaves main without the
+  # version bump, so the next release would reuse this version.
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: [npm, github, commit]
+    # always() keeps this job from being skipped when `commit` is skipped
+    # because a publish job failed.
+    if: ${{ always() && contains(needs.*.result, 'failure') && github.event.inputs.dry-run == 'false' }}
+    permissions: {}
+    env:
+      # Secrets can't be read in a step `if`, so the Slack step tests this copy.
+      # While the secret is unset, the notice is skipped.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_NOTIFY_RELEASES_WEBHOOK_URL }}
+
+    steps:
+      - name: Notify Slack of a failed release
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        continue-on-error: true
+        with:
+          webhook: ${{ env.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "Analytics JS SDK release failure",
+              "username": "Analytics JS deployment bot",
+              "icon_url": "https://raw.githubusercontent.com/github/explore/main/topics/javascript/javascript.png",
+              "channel": "#server-sdk-deployments",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Analytics JS* SDK release :warning: failure :warning:\nnpm publish: ${{ needs.npm.result }}, GitHub Packages publish: ${{ needs.github.result }}, version bump PR: ${{ needs.commit.result }}\nView the <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|run logs> to see why."
+                  }
+                }
+              ]
+            }
