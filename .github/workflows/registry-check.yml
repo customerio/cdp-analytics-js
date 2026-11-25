@@ -1,0 +1,106 @@
+name: Registry check
+
+# Release runs publish to npm first and then open a version bump PR from a
+# release/version-bump-<run id> branch, so this reads the version from that PR.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to look for on npm, for example 0.9.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  registry-check:
+    # Dry runs publish nothing and are titled "Release dry-run" (see run-name in release.yml).
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.display_title != 'Release dry-run') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PACKAGE: '@customerio/cdp-analytics-browser'
+      # Secrets can't be read in a step `if`, so the alert step tests this copy.
+      # While the secret is unset, the alert is skipped.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_NOTIFY_RELEASES_WEBHOOK_URL }}
+    steps:
+      - name: Work out which version to look for
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+          BUMP_REF: release/version-bump-${{ github.event.workflow_run.id }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            version="${VERSION_INPUT#v}"
+          else
+            # The branch is deleted when the bump PR merges, but the PR keeps its
+            # head commit, so a late or retried check still finds the version.
+            ref=$(gh api -X GET "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f head="${GITHUB_REPOSITORY_OWNER}:${BUMP_REF}" -f state=all \
+              --jq '.[0].head.sha // empty' || true)
+            if ! printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+              ref="$BUMP_REF"
+            fi
+            version=$(gh api -H 'Accept: application/vnd.github.raw+json' \
+              -X GET "repos/${GITHUB_REPOSITORY}/contents/packages/browser/package.json" \
+              -f ref="$ref" | jq -r .version || true)
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::Could not read a valid version, got '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the version to appear on npm
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          POLL_INTERVAL: '300'
+          POLL_ATTEMPTS: '11'
+        run: |
+          url="https://registry.npmjs.org/${PACKAGE/\//%2F}/${VERSION}"
+          for attempt in $(seq 1 "$POLL_ATTEMPTS"); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "${PACKAGE}@${VERSION} is on npm."
+              exit 0
+            fi
+            echo "Attempt ${attempt}/${POLL_ATTEMPTS}: ${PACKAGE}@${VERSION} is not on npm yet (HTTP ${code:-none})."
+            if [ "$attempt" -lt "$POLL_ATTEMPTS" ]; then
+              sleep "$POLL_INTERVAL"
+            fi
+          done
+          echo "::error::${PACKAGE}@${VERSION} is still missing from npm."
+          exit 1
+
+      - name: Alert Slack that the version is missing
+        if: ${{ failure() && env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        continue-on-error: true
+        with:
+          webhook: ${{ env.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "Analytics JS SDK ${{ steps.version.outputs.version || '(version not found)' }} is missing from npm",
+              "username": "Analytics JS deployment bot",
+              "icon_url": "https://raw.githubusercontent.com/github/explore/main/topics/javascript/javascript.png",
+              "channel": "#server-sdk-deployments",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Analytics JS* SDK ${{ steps.version.outputs.version || '(version not found)' }} is missing from npm :warning:\nThe release run finished but the check could not confirm the version on the registry. View the <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|run logs>."
+                  }
+                }
+              ]
+            }
